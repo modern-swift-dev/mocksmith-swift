@@ -43,7 +43,7 @@ struct PropertyMember {
         let settable = text.contains("set")
         let isStatic = declaration.modifiers.contains { ["static", "class"].contains($0.name.text) }
         let nonisolatedModifier = declaration.modifiers.first(where: { $0.name.text == "nonisolated" })?.trimmedDescription ?? ""
-        let type = rewriteType(annotation.type.trimmedDescription, replacements: replacements, mockType: mockType)
+        let type = rewriteType(annotation.type, replacements: replacements, mockType: mockType)
         let accessors: [AccessorDeclSyntax] = {
             guard let block = binding.accessorBlock, case let .accessors(list) = block.accessors else {
                 return []

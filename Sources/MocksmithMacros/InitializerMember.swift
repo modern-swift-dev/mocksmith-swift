@@ -111,15 +111,15 @@ struct InitializerMember {
             }
         }
         var parameterKeys = declaration.signature.parameterClause.parameters.map { parameter in
-            let type = rewriteType(parameter.type.trimmedDescription, replacements: replacements, mockType: mockType)
+            let type = rewriteType(parameter.type, replacements: replacements, mockType: mockType)
             return "\(parameter.firstName.text):\(canonicalize(type))\(parameter.ellipsis?.text ?? "")"
         }
         parameterKeys.append(contentsOf: appending)
         let generic = declaration.genericParameterClause.map {
-            rewriteType($0.trimmedDescription, replacements: replacements, mockType: mockType)
+            rewriteType($0, replacements: replacements, mockType: mockType)
         } ?? ""
         let whereClause = declaration.genericWhereClause.map {
-            rewriteType($0.trimmedDescription, replacements: replacements, mockType: mockType)
+            rewriteType($0, replacements: replacements, mockType: mockType)
         } ?? ""
         return canonicalize(generic) + "(" + parameterKeys.joined(separator: ",") + ")" + canonicalize(whereClause)
     }
@@ -129,7 +129,7 @@ struct InitializerMember {
             let external = parameter.firstName.text
             let local = parameter.secondName?.text ?? (external == "_" ? "argument\(position)" : external)
             var type = opaqueParameter(at: position)?.name
-                ?? rewriteType(parameter.type.trimmedDescription, replacements: replacements, mockType: mockType)
+                ?? rewriteType(parameter.type, replacements: replacements, mockType: mockType)
             if parameter.ellipsis != nil {
                 type = "[\(type)]"
             }
@@ -186,11 +186,11 @@ struct InitializerMember {
         let required = isActor ? "" : "required "
         let override = isObjectiveC && parameters.isEmpty && declaration.optionalMark == nil
             && declaration.signature.effectSpecifiers == nil ? "override " : ""
-        var signature = rewriteType(declaration.signature.trimmedDescription, replacements: replacements, mockType: mockType)
+        var signature = rewriteType(declaration.signature, replacements: replacements, mockType: mockType)
         for opaque in opaqueParameters {
             signature.replaceFirst("some \(opaque.constraint)", with: opaque.name)
         }
-        let whereClause = declaration.genericWhereClause.map { " " + rewriteType($0.trimmedDescription, replacements: replacements, mockType: mockType) } ?? ""
+        let whereClause = declaration.genericWhereClause.map { " " + rewriteType($0, replacements: replacements, mockType: mockType) } ?? ""
         let attributes = declaration.attributes.map(\.trimmedDescription).joined(separator: "\n    ")
         let attributePrefix = attributes.isEmpty ? "" : "    " + attributes + "\n"
         let ignored = Set(["required", "public", "package", "internal", "fileprivate", "private"])
@@ -204,7 +204,7 @@ struct InitializerMember {
         guard !declaration.signature.parameterClause.parameters.contains(where: { $0.firstName.text == "defaults" }) else {
             return ""
         }
-        var parameterClause = rewriteType(declaration.signature.parameterClause.trimmedDescription, replacements: replacements, mockType: mockType)
+        var parameterClause = rewriteType(declaration.signature.parameterClause, replacements: replacements, mockType: mockType)
         for opaque in opaqueParameters {
             parameterClause.replaceFirst("some \(opaque.constraint)", with: opaque.name)
         }
@@ -213,7 +213,7 @@ struct InitializerMember {
             at: parameterClause.index(before: parameterClause.endIndex)
         )
         let effects = declaration.signature.effectSpecifiers.map { " " + $0.trimmedDescription } ?? ""
-        let whereClause = declaration.genericWhereClause.map { " " + rewriteType($0.trimmedDescription, replacements: replacements, mockType: mockType) } ?? ""
+        let whereClause = declaration.genericWhereClause.map { " " + rewriteType($0, replacements: replacements, mockType: mockType) } ?? ""
         let attributes = declaration.attributes.compactMap { attribute -> String? in
             guard let attribute = attribute.as(AttributeSyntax.self) else {
                 return nil
@@ -233,7 +233,7 @@ struct InitializerMember {
         guard !declaration.signature.parameterClause.parameters.contains(where: { ["defaults", "configure"].contains($0.firstName.text) }) else {
             return ""
         }
-        var parameterClause = rewriteType(declaration.signature.parameterClause.trimmedDescription, replacements: replacements, mockType: mockType)
+        var parameterClause = rewriteType(declaration.signature.parameterClause, replacements: replacements, mockType: mockType)
         for opaque in opaqueParameters {
             parameterClause.replaceFirst("some \(opaque.constraint)", with: opaque.name)
         }
@@ -243,7 +243,7 @@ struct InitializerMember {
             at: parameterClause.index(before: parameterClause.endIndex)
         )
         let effects = declaration.signature.effectSpecifiers.map { " " + $0.trimmedDescription } ?? ""
-        let whereClause = declaration.genericWhereClause.map { " " + rewriteType($0.trimmedDescription, replacements: replacements, mockType: mockType) } ?? ""
+        let whereClause = declaration.genericWhereClause.map { " " + rewriteType($0, replacements: replacements, mockType: mockType) } ?? ""
         let attributes = declaration.attributes.compactMap { attribute -> String? in
             guard let attribute = attribute.as(AttributeSyntax.self) else {
                 return nil
@@ -276,7 +276,7 @@ struct InitializerMember {
             return availabilityPrefix + """
                     \(access)\(factoryIsolation)func initializer\(genericClause)(\(typeTokens))\(declaration.genericWhereClause
                 .map { " " + rewriteType(
-                    $0.trimmedDescription,
+                    $0,
                     replacements: replacements,
                     mockType: mockType
                 ) } ?? "") {
@@ -287,7 +287,7 @@ struct InitializerMember {
         return availabilityPrefix + """
                 \(access)\(factoryIsolation)func initializer\(genericClause)(\(matcherDeclarations))\(declaration.genericWhereClause
             .map { " " + rewriteType(
-                $0.trimmedDescription,
+                $0,
                 replacements: replacements,
                 mockType: mockType
             ) } ?? "") {
@@ -304,7 +304,7 @@ struct InitializerMember {
         return availabilityPrefix + """
                 \(access)\(factoryIsolation)func initializer\(genericClause)(\(matcherDeclarations)) -> CallHistory<\(argumentsType)>\(declaration.genericWhereClause
             .map { " " + rewriteType(
-                $0.trimmedDescription,
+                $0,
                 replacements: replacements,
                 mockType: mockType
             ) } ?? "") {
@@ -330,7 +330,7 @@ struct InitializerMember {
             return availabilityPrefix + """
                     \(access)\(factoryIsolation)func initializer\(genericClause)(\(typeTokens))\(declaration.genericWhereClause
                 .map { " " + rewriteType(
-                    $0.trimmedDescription,
+                    $0,
                     replacements: replacements,
                     mockType: mockType
                 ) } ?? "") {
@@ -347,7 +347,7 @@ struct InitializerMember {
         return availabilityPrefix + """
                 \(access)\(factoryIsolation)func initializer\(genericClause)(\(matcherDeclarations))\(declaration.genericWhereClause
             .map { " " + rewriteType(
-                $0.trimmedDescription,
+                $0,
                 replacements: replacements,
                 mockType: mockType
             ) } ?? "") {

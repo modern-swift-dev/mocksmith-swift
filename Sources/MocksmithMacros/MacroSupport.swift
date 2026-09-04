@@ -136,30 +136,42 @@ func opaqueParameterType(_ text: String, position: Int) -> (name: String, constr
     return ("_MockOpaque\(position)", String(type.dropFirst(5)))
 }
 
-func rewriteType(_ text: String, replacements: [String: String], mockType: String) -> String {
-    var text = text
-    for (associated, replacement) in replacements {
-        text = text.replacingOccurrences(
-            of: #"\bSelf\s*\.\s*"# + NSRegularExpression.escapedPattern(for: associated) + #"\b"#,
-            with: replacement,
-            options: .regularExpression
-        )
+func rewriteType(_ syntax: some SyntaxProtocol, replacements: [String: String], mockType: String) -> String {
+    TypeReferenceRewriter(replacements: replacements, mockType: mockType)
+        .rewrite(syntax).trimmedDescription
+}
+
+private final class TypeReferenceRewriter: SyntaxRewriter {
+    let replacements: [String: String]
+    let mockType: String
+
+    init(replacements: [String: String], mockType: String) {
+        self.replacements = replacements
+        self.mockType = mockType
+        super.init(viewMode: .sourceAccurate)
     }
-    let mapping = replacements.merging(["Self": mockType]) { current, _ in current }
-    let names = mapping.keys.sorted { $0.count > $1.count }.map(NSRegularExpression.escapedPattern)
-    guard !names.isEmpty,
-          let expression = try? NSRegularExpression(pattern: "\\b(?:\(names.joined(separator: "|")))\\b") else {
-        return text
-    }
-    let result = NSMutableString(string: text)
-    let range = NSRange(location: 0, length: result.length)
-    for match in expression.matches(in: text, range: range).reversed() {
-        let source = result.substring(with: match.range)
-        if let replacement = mapping[source] {
-            result.replaceCharacters(in: match.range, with: replacement)
+
+    override func visit(_ node: IdentifierTypeSyntax) -> TypeSyntax {
+        var node = node
+        if let replacement = replacements[node.name.text] ?? (node.name.text == "Self" ? mockType : nil) {
+            node.name = .identifier(replacement, leadingTrivia: node.name.leadingTrivia, trailingTrivia: node.name.trailingTrivia)
         }
+        return super.visit(node)
     }
-    return result as String
+
+    override func visit(_ node: MemberTypeSyntax) -> TypeSyntax {
+        if let base = node.baseType.as(IdentifierTypeSyntax.self), base.name.text == "Self",
+           let replacement = replacements[node.name.text] {
+            return TypeSyntax(IdentifierTypeSyntax(
+                leadingTrivia: node.leadingTrivia,
+                name: .identifier(replacement),
+                genericArgumentClause: node.genericArgumentClause,
+                trailingTrivia: node.trailingTrivia
+            ))
+        }
+        // Rewriting the base preserves member names such as T.Element.
+        return super.visit(node)
+    }
 }
 
 extension String {

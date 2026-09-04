@@ -33,7 +33,7 @@ struct FunctionMember {
             let external = parameter.firstName.text
             let local = parameter.secondName?.text ?? (external == "_" ? "argument\(position)" : external)
             var type = opaqueParameter(at: position)?.name
-                ?? strippingEscapingAttribute(from: rewriteType(parameter.type.trimmedDescription, replacements: replacements, mockType: mockType))
+                ?? strippingEscapingAttribute(from: rewriteType(parameter.type, replacements: replacements, mockType: mockType))
             if parameter.ellipsis != nil {
                 type = "[\(type)]"
             }
@@ -51,7 +51,7 @@ struct FunctionMember {
             }
             let external = parameter.firstName.text
             let local = parameter.secondName?.text ?? (external == "_" ? "argument\(position)" : external)
-            return (local, rewriteType(parameter.type.trimmedDescription, replacements: replacements, mockType: mockType))
+            return (local, rewriteType(parameter.type, replacements: replacements, mockType: mockType))
         }
     }
 
@@ -98,7 +98,7 @@ struct FunctionMember {
     }
 
     var outputType: String {
-        declaration.signature.returnClause.map { rewriteType($0.type.trimmedDescription, replacements: replacements, mockType: mockType) } ?? "Void"
+        declaration.signature.returnClause.map { rewriteType($0.type, replacements: replacements, mockType: mockType) } ?? "Void"
     }
 
     var defaultFallback: String? {
@@ -165,7 +165,7 @@ struct FunctionMember {
     }
 
     var whereClause: String {
-        declaration.genericWhereClause.map { " " + rewriteType($0.trimmedDescription, replacements: replacements, mockType: mockType) } ?? ""
+        declaration.genericWhereClause.map { " " + rewriteType($0, replacements: replacements, mockType: mockType) } ?? ""
     }
 
     var genericTypes: String {
@@ -343,7 +343,7 @@ struct FunctionMember {
     }
 
     var witness: String {
-        var signatureText = rewriteType(declaration.signature.trimmedDescription, replacements: replacements, mockType: mockType)
+        var signatureText = rewriteType(declaration.signature, replacements: replacements, mockType: mockType)
         for opaque in opaqueParameters {
             if let range = signatureText.range(of: "some \(opaque.constraint)") {
                 signatureText.replaceSubrange(range, with: opaque.name)

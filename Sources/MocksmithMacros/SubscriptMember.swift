@@ -75,14 +75,14 @@ struct SubscriptMember {
             let external = parameter.firstName.text
             let local = parameter.secondName?.text ?? (external == "_" ? "index\(position)" : external)
             var type = opaqueParameter(in: declaration, at: position)?.name
-                ?? rewriteType(parameter.type.trimmedDescription, replacements: replacements, mockType: mockType)
+                ?? rewriteType(parameter.type, replacements: replacements, mockType: mockType)
             if parameter.ellipsis != nil {
                 type = "[\(type)]"
             }
             return ParameterInfo(external: external, local: local, type: type, matcher: "matching\(position)", position: position)
         }
         let settable = (declaration.accessorBlock?.trimmedDescription ?? "{ get }").contains("set")
-        let valueType = rewriteType(declaration.returnClause.type.trimmedDescription, replacements: replacements, mockType: mockType)
+        let valueType = rewriteType(declaration.returnClause.type, replacements: replacements, mockType: mockType)
         let isOptionalResult = isOptionalType(declaration.returnClause.type)
         let isVoidResult = isVoidType(declaration.returnClause.type)
         let accessors: [AccessorDeclSyntax] = {
@@ -327,7 +327,7 @@ struct SubscriptMember {
             return ""
         }
         let generics = genericClause
-        let whereClause = declaration.genericWhereClause.map { rewriteType($0.trimmedDescription, replacements: replacements, mockType: mockType) } ?? ""
+        let whereClause = declaration.genericWhereClause.map { rewriteType($0, replacements: replacements, mockType: mockType) } ?? ""
         let fallback = defaultFallback.map { ", unstubbed: \($0)" } ?? ""
         let defaultPolicySnapshot = isAsync && defaultFallback != nil
             ? "let _mocksmithDefaultPolicy = self._mocksmithDefaultPolicy\n            "
@@ -364,7 +364,7 @@ struct SubscriptMember {
         let setter = isReadWrite ?
             "\n        set {\n            \(setterMember.witnessRegistryResolution)do { return try \(setterMember.witnessChannelReference).invoke(\(setterArgs)\(setterFallback)) }\n            catch { preconditionFailure(\"Unstubbed nonthrowing member subscript.set: \\(error)\") }\n        }" :
             ""
-        var parameterClause = rewriteType(declaration.parameterClause.trimmedDescription, replacements: replacements, mockType: mockType)
+        var parameterClause = rewriteType(declaration.parameterClause, replacements: replacements, mockType: mockType)
         for opaque in opaqueParameters {
             parameterClause.replaceFirst("some \(opaque.constraint)", with: opaque.name)
         }
@@ -532,7 +532,7 @@ struct SubscriptMember {
     }
 
     var whereClause: String {
-        declaration.genericWhereClause.map { " " + rewriteType($0.trimmedDescription, replacements: replacements, mockType: mockType) } ?? ""
+        declaration.genericWhereClause.map { " " + rewriteType($0, replacements: replacements, mockType: mockType) } ?? ""
     }
 
     private func factoryArguments(_ arguments: String, inferredFrom: String = "") -> String {
