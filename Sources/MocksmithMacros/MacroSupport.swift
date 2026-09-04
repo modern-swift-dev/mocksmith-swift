@@ -136,6 +136,20 @@ func opaqueParameterType(_ text: String, position: Int) -> (name: String, constr
     return ("_MockOpaque\(position)", String(type.dropFirst(5)))
 }
 
+/// Only a directly spelled function parameter is implicitly nonescaping.
+/// Optional functions and functions inside containers are ordinary stored values.
+func isNonescapingClosure(_ type: TypeSyntax) -> Bool {
+    if let attributed = type.as(AttributedTypeSyntax.self) {
+        return !hasAttribute(named: "escaping", in: attributed.attributes)
+            && isNonescapingClosure(attributed.baseType)
+    }
+    if let tuple = type.as(TupleTypeSyntax.self), tuple.elements.count == 1,
+       let element = tuple.elements.first {
+        return isNonescapingClosure(element.type)
+    }
+    return type.is(FunctionTypeSyntax.self)
+}
+
 func rewriteType(_ syntax: some SyntaxProtocol, replacements: [String: String], mockType: String) -> String {
     TypeReferenceRewriter(replacements: replacements, mockType: mockType)
         .rewrite(syntax).trimmedDescription

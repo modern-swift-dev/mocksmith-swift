@@ -112,7 +112,7 @@ struct MockGenerator {
             if let function = item.decl.as(FunctionDeclSyntax.self) {
                 let transient = hasAttribute(named: "MockNoncopyable", in: function.attributes) || function.trimmedDescription.contains("~Copyable")
                 if transient, function.signature.parameterClause.parameters.contains(where: {
-                    $0.type.trimmedDescription.contains("->") && !$0.trimmedDescription.contains("@escaping")
+                    isNonescapingClosure($0.type)
                 }) {
                     diagnose("nonescaping closure parameters are not supported on noncopyable requirements", at: function, in: context)
                     valid = false
@@ -143,7 +143,7 @@ struct MockGenerator {
                     )
                 }
                 if initializer.signature.parameterClause.parameters.contains(where: {
-                    $0.type.trimmedDescription.contains("->") && !$0.trimmedDescription.contains("@escaping")
+                    isNonescapingClosure($0.type)
                 }) {
                     diagnose("nonescaping initializer closures cannot be recorded", at: initializer, in: context)
                     valid = false
@@ -160,7 +160,7 @@ struct MockGenerator {
                 let hasValuePack = subscriptDecl.genericParameterClause?.parameters.contains(where: { $0.specifier != nil }) == true
                 let transient = hasAttribute(named: "MockNoncopyable", in: subscriptDecl.attributes) || subscriptDecl.trimmedDescription.contains("~Copyable")
                 if transient, subscriptDecl.parameterClause.parameters.contains(where: {
-                    $0.type.trimmedDescription.contains("->") && !$0.trimmedDescription.contains("@escaping")
+                    isNonescapingClosure($0.type)
                 }) {
                     diagnose("nonescaping closure parameters are not supported on noncopyable requirements", at: subscriptDecl, in: context)
                     valid = false

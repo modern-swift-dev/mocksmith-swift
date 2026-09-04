@@ -27,7 +27,7 @@ struct FunctionMember {
 
     var parameters: [ParameterInfo] {
         declaration.signature.parameterClause.parameters.enumerated().compactMap { position, parameter in
-            if parameter.type.trimmedDescription.contains("->"), !parameter.trimmedDescription.contains("@escaping") {
+            if isNonescapingClosure(parameter.type) {
                 return nil
             }
             let external = parameter.firstName.text
@@ -46,7 +46,7 @@ struct FunctionMember {
 
     var ephemeralParameters: [(local: String, type: String)] {
         declaration.signature.parameterClause.parameters.enumerated().compactMap { position, parameter -> (String, String)? in
-            guard parameter.type.trimmedDescription.contains("->"), !parameter.trimmedDescription.contains("@escaping") else {
+            guard isNonescapingClosure(parameter.type) else {
                 return nil
             }
             let external = parameter.firstName.text
