@@ -217,3 +217,70 @@ protocol EffectfulIndexedParent {
     #expect(try await mock[1] == 7)
     Verify(mock, 1).subscriptGet(.value(1))
 }
+
+protocol WritableRequirements {
+    var mergedValue: Int { get set }
+    subscript(_ index: Int) -> Int { get set }
+}
+
+protocol ReadableRequirements {
+    var mergedValue: Int { get }
+    subscript(_ index: Int) -> Int { get }
+}
+
+@Mockable protocol WritableThenReadable: WritableRequirements, ReadableRequirements {}
+@Mockable protocol ReadableThenWritable: ReadableRequirements, WritableRequirements {}
+@Mockable protocol RedeclaredWritable: ReadableRequirements {
+    var mergedValue: Int { get set }
+    subscript(_ index: Int) -> Int { get set }
+}
+
+@Test private func inheritedSettersSurviveReadOnlyRequirements() {
+    let first = WritableThenReadableMock()
+    Given(first).mergedValue(set: .any)
+    Given(first).subscriptSet(.any, value: .any)
+    first.mergedValue = 1
+    first[2] = 3
+    Verify(first, 1).mergedValue(set: .value(1))
+    Verify(first, 1).subscriptSet(.value(2), value: .value(3))
+
+    let reversed = ReadableThenWritableMock()
+    Given(reversed).mergedValue(set: .any)
+    Given(reversed).subscriptSet(.any, value: .any)
+    reversed.mergedValue = 4
+    reversed[5] = 6
+    Verify(reversed, 1).mergedValue(set: .value(4))
+    Verify(reversed, 1).subscriptSet(.value(5), value: .value(6))
+
+    let redeclared = RedeclaredWritableMock()
+    Given(redeclared).mergedValue(set: .any)
+    Given(redeclared).subscriptSet(.any, value: .any)
+    redeclared.mergedValue = 7
+    redeclared[8] = 9
+    Verify(redeclared, 1).mergedValue(set: .value(7))
+    Verify(redeclared, 1).subscriptSet(.value(8), value: .value(9))
+}
+
+protocol HashableValueParent {
+    associatedtype Value: Hashable where Value: Sendable
+    func constrainedValue() -> Value
+}
+
+protocol CodableValueParent {
+    associatedtype Value: Codable where Value: Comparable
+}
+
+@Mockable protocol HashableThenCodable: HashableValueParent, CodableValueParent {}
+@Mockable protocol CodableThenHashable: CodableValueParent, HashableValueParent {}
+
+@Test private func inheritedAssociatedTypeConstraintsAreCombined() {
+    let first = HashableThenCodableMock<String>()
+    Given(first).constrainedValue().willReturn("first")
+    #expect(first.constrainedValue() == "first")
+    Verify(first, 1).constrainedValue()
+
+    let reversed = CodableThenHashableMock<String>()
+    Given(reversed).constrainedValue().willReturn("reversed")
+    #expect(reversed.constrainedValue() == "reversed")
+    Verify(reversed, 1).constrainedValue()
+}

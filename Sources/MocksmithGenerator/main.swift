@@ -371,7 +371,7 @@ private final class Scanner {
                 if membersByKey[key] == nil {
                     memberOrder.append(key)
                 }
-                membersByKey[key] = member
+                membersByKey[key] = membersByKey[key].map { mergeRequirements($0, member) } ?? member
             }
             for element in record.declaration.attributes {
                 guard let attribute = element.as(AttributeSyntax.self), isRelevant(attribute) else {
@@ -567,6 +567,64 @@ private func isRelevant(_ attribute: AttributeSyntax) -> Bool {
 
 private func simpleName(_ text: String) -> String {
     text.split(separator: ".").last.map(String.init) ?? text
+}
+
+/// Keeps requirements contributed by every parent when declarations share a witness.
+private func mergeRequirements(
+    _ inherited: MemberBlockItemSyntax,
+    _ redeclared: MemberBlockItemSyntax
+) -> MemberBlockItemSyntax {
+    var result = redeclared
+    if let previous = inherited.decl.as(AssociatedTypeDeclSyntax.self),
+       var current = redeclared.decl.as(AssociatedTypeDeclSyntax.self) {
+        var seenTypes = Set<String>()
+        var inheritedTypes = Array(previous.inheritanceClause?.inheritedTypes ?? [])
+        inheritedTypes.append(contentsOf: current.inheritanceClause?.inheritedTypes ?? [])
+        inheritedTypes = inheritedTypes.filter { seenTypes.insert($0.type.trimmedDescription).inserted }
+        if var clause = current.inheritanceClause ?? previous.inheritanceClause {
+            for index in inheritedTypes.indices {
+                inheritedTypes[index].trailingComma = index < inheritedTypes.count - 1
+                    ? .commaToken(trailingTrivia: .space) : nil
+            }
+            clause.inheritedTypes = InheritedTypeListSyntax(inheritedTypes)
+            current.inheritanceClause = clause
+        }
+
+        var seenRequirements = Set<String>()
+        var requirements = Array(previous.genericWhereClause?.requirements ?? [])
+        requirements.append(contentsOf: current.genericWhereClause?.requirements ?? [])
+        requirements = requirements.filter { seenRequirements.insert($0.requirement.trimmedDescription).inserted }
+        if var clause = current.genericWhereClause ?? previous.genericWhereClause {
+            for index in requirements.indices {
+                requirements[index].trailingComma = index < requirements.count - 1
+                    ? .commaToken(trailingTrivia: .space) : nil
+            }
+            clause.requirements = GenericRequirementListSyntax(requirements)
+            current.genericWhereClause = clause
+        }
+        result.decl = DeclSyntax(current)
+    } else if let previous = inherited.decl.as(VariableDeclSyntax.self),
+              var current = redeclared.decl.as(VariableDeclSyntax.self),
+              let previousBinding = previous.bindings.first,
+              var currentBinding = current.bindings.first,
+              hasSetter(previousBinding.accessorBlock), !hasSetter(currentBinding.accessorBlock) {
+        currentBinding.accessorBlock = previousBinding.accessorBlock
+        current.bindings = PatternBindingListSyntax([currentBinding])
+        result.decl = DeclSyntax(current)
+    } else if let previous = inherited.decl.as(SubscriptDeclSyntax.self),
+              var current = redeclared.decl.as(SubscriptDeclSyntax.self),
+              hasSetter(previous.accessorBlock), !hasSetter(current.accessorBlock) {
+        current.accessorBlock = previous.accessorBlock
+        result.decl = DeclSyntax(current)
+    }
+    return result
+}
+
+private func hasSetter(_ block: AccessorBlockSyntax?) -> Bool {
+    guard let block, case let .accessors(accessors) = block.accessors else {
+        return false
+    }
+    return accessors.contains { $0.accessorSpecifier.tokenKind == .keyword(.set) }
 }
 
 private func memberKey(_ declaration: DeclSyntax) -> String {
