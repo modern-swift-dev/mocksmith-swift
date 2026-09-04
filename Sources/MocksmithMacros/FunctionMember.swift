@@ -385,7 +385,7 @@ struct FunctionMember {
             """.split(separator: "\n", omittingEmptySubsequences: false).map { "    " + $0 }.joined(separator: "\n")
         }
         if isThrowing {
-            return availabilityPrefix(indentation: "    ") + attributes + "    \(signature) {\n        \(witnessRegistryResolution)\(invocation)\n    }"
+            return availabilityPrefix(indentation: "    ") + attributes + "    \(signature) {\n        \(witnessRegistryResolution)return \(invocation)\n    }"
         }
         return availabilityPrefix(indentation: "    ") + attributes + """
             \(signature) {
