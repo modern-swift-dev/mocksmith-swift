@@ -12,7 +12,14 @@ public final class MockPropertyState<Value, Failure: Error>: @unchecked Sendable
     /// The outcome returned by the controlled property getter.
     public var result: Result<Value, Failure> {
         get { lock.withLock { storedResult } }
-        set { lock.withLock { storedResult = newValue } }
+        set {
+            let retired = lock.withLock {
+                let retired = storedResult
+                storedResult = newValue
+                return retired
+            }
+            withExtendedLifetime(retired) {}
+        }
     }
 
     public func succeed(with value: Value) {

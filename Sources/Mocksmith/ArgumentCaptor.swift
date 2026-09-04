@@ -15,7 +15,12 @@ public final class ArgumentCaptor<Value>: @unchecked Sendable {
     }
 
     public func reset() {
-        lock.withLock { storage.removeAll() }
+        let retired = lock.withLock {
+            let retired = storage
+            storage.removeAll()
+            return retired
+        }
+        withExtendedLifetime(retired) {}
     }
 
     func append(_ value: Value) {

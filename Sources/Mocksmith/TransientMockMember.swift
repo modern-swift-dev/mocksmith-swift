@@ -279,7 +279,8 @@ public final class TransientMockMember<
 
     public func reset(_ scopes: [MockScope] = Array(MockScope.all)) {
         let scopes = Set(scopes)
-        lock.withLock {
+        let retired = lock.withLock {
+            let retired = (stubs, actions, actionStubs)
             if scopes.contains(.invocations) {
                 invocations.removeAll()
                 verifiedSequences.removeAll()
@@ -298,7 +299,9 @@ public final class TransientMockMember<
                 }
             }
             actionStubs.removeAll { !$0.actionEnabled && !$0.stubEnabled }
+            return retired
         }
+        withExtendedLifetime(retired) {}
     }
 
     private func bestAction(in candidates: [Action], arguments: borrowing Arguments) -> Action? {

@@ -158,11 +158,13 @@ public final class StaticMockRegistry: @unchecked Sendable {
 
     public func remove(owner: Any.Type, key: String) {
         let identifier = ObjectIdentifier(owner)
-        let releases = lock.withLock { () -> [() -> Void] in
-            entries.keys.filter { $0.owner == identifier && $0.key == key }.forEach { entries.removeValue(forKey: $0) }
-            let keys = transientEntries.keys.filter { $0.owner == identifier && $0.key == key }
-            return keys.compactMap { transientEntries.removeValue(forKey: $0)?.release }
+        let retired = lock.withLock {
+            let keys = entries.keys.filter { $0.owner == identifier && $0.key == key }
+            let removed = keys.compactMap { entries.removeValue(forKey: $0) }
+            let transientKeys = transientEntries.keys.filter { $0.owner == identifier && $0.key == key }
+            return (removed, transientKeys.compactMap { transientEntries.removeValue(forKey: $0) })
         }
-        releases.forEach { $0() }
+        retired.1.forEach { $0.release() }
+        withExtendedLifetime(retired) {}
     }
 }

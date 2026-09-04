@@ -317,7 +317,9 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
 
     public func reset(_ scopes: [MockScope] = Array(MockScope.all)) {
         let scopes = Set(scopes)
-        let waiters = lock.withLock { () -> [CheckedContinuation<Void, any Error>] in
+        let (retired, waiters) = lock.withLock {
+            // User values and captured objects may reenter this member from deinit.
+            let retired = (invocations, stubs, actions, actionStubs)
             if scopes.contains(.invocations) {
                 invocations.removeAll()
                 verifiedSequences.removeAll()
@@ -337,8 +339,9 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
                 }
             }
             actionStubs.removeAll { !$0.actionEnabled && !$0.stubEnabled }
-            return scopes.contains(.invocations) ? drainInvocationWaiters() : []
+            return (retired, scopes.contains(.invocations) ? drainInvocationWaiters() : [])
         }
+        withExtendedLifetime(retired) {}
         waiters.forEach { $0.resume() }
     }
 
