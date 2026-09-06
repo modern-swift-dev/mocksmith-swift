@@ -4,13 +4,44 @@ on:
   push:
   pull_request:
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
+  lint:
+    runs-on: blacksmith-6vcpu-macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Swift 6.3
+        run: swift --version | grep -F 'Swift version 6.3'
+      - name: Install lint tools
+        run: |
+          brew install mint actionlint
+          mint bootstrap
+      - name: Lint
+        run: make lint
+
   linux:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     container: swift:6.3
     steps:
       - uses: actions/checkout@v4
-      - run: swift test
+      - name: Verify Swift 6.3
+        run: swift --version | grep -F 'Swift version 6.3'
+      - name: Install Mint and xcbeautify
+        run: |
+          git clone --depth 1 --branch 0.18.0 https://github.com/yonaskolb/Mint.git "$RUNNER_TEMP/Mint"
+          swift build --package-path "$RUNNER_TEMP/Mint" -c release
+          mint_bin="$(swift build --package-path "$RUNNER_TEMP/Mint" -c release --show-bin-path)"
+          echo "$mint_bin" >> "$GITHUB_PATH"
+          "$mint_bin/mint" install cpisciotta/xcbeautify
+      - name: Build
+        run: swift build 2>&1 | mint run --no-install cpisciotta/xcbeautify -q
+      - name: Test
+        run: swift test 2>&1 | mint run --no-install cpisciotta/xcbeautify -q
 
   apple:
     runs-on: blacksmith-6vcpu-macos-26
@@ -36,9 +67,13 @@ jobs:
             runtime: com.apple.CoreSimulator.SimRuntime.watchOS-26-5
     steps:
       - uses: actions/checkout@v4
+      - name: Install xcbeautify
+        run: |
+          brew install mint
+          mint install cpisciotta/xcbeautify
       - name: Verify Xcode 26.6 and Swift 6.3
         run: |
-          xcodebuild -version | grep -F 'Xcode 26.6'
+          xcodebuild -version | grep -F 'Xcode 26.6' 2>&1 | mint run --no-install cpisciotta/xcbeautify -q
           swift --version | grep -F 'Swift version 6.3'
       - name: Select test destination
         id: destination
@@ -65,5 +100,7 @@ jobs:
           fi
 
           echo "value=id=$simulator_id" >> "$GITHUB_OUTPUT"
+      - name: Build for ${{ matrix.platform }}
+        run: xcodebuild build -scheme Mocksmith-Package -destination '${{ steps.destination.outputs.value }}' 2>&1 | mint run --no-install cpisciotta/xcbeautify -q
       - name: Test on ${{ matrix.platform }}
-        run: xcodebuild test -scheme Mocksmith-Package -destination '${{ steps.destination.outputs.value }}'
+        run: xcodebuild test -scheme Mocksmith-Package -destination '${{ steps.destination.outputs.value }}' 2>&1 | mint run --no-install cpisciotta/xcbeautify -q

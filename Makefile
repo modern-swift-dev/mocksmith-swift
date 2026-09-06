@@ -1,3 +1,6 @@
+# Override with a shell-quoted file list to check only changed Swift files.
+SWIFT_FILES ?= .
+
 .PHONY: setup lint format docs-release test-linux test-macos test-ios test-swift test test-tvos test-watchos test-all
 
 setup:
@@ -9,14 +12,14 @@ setup:
 	mint bootstrap
 	lefthook install
 
-lint:
+lint: lint-workflows
 
-	mint run --no-install realm/SwiftLint  --config .swiftlint.yml --quiet
+	mint run --no-install realm/SwiftLint lint --config .swiftlint.yml --quiet --force-exclude $(SWIFT_FILES)
 
 format:
 
-	mint run --no-install nicklockwood/SwiftFormat . --config .swiftformat --quiet
-	mint run --no-install realm/SwiftLint  --config .swiftlint.yml --fix --quiet
+	mint run --no-install nicklockwood/SwiftFormat $(SWIFT_FILES) --config .swiftformat --quiet
+	mint run --no-install realm/SwiftLint lint --config .swiftlint.yml --fix --quiet --force-exclude $(SWIFT_FILES)
 
 docs-release:
 
@@ -61,3 +64,8 @@ test-watchos:
 		-destination platform="watchOS Simulator,name=Apple Watch Series 11 (46mm),OS=26.5" | mint run --no-install cpisciotta/xcbeautify -q
 
 test-all: test-swift test-macos test-ios test-tvos test-watchos test-linux
+
+.PHONY: lint-workflows
+
+lint-workflows:
+	actionlint
