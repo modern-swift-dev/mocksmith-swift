@@ -14,22 +14,22 @@ final class XCTestCallHistoryAdapterTests: XCTestCase {
     }
 
     #if canImport(Darwin)
-    func testRequirementReportsSourceLocation() throws {
-        let member = MockMember<Int, Void, Void>(name: "save(_:)")
-        let history = member.callHistory { _ in true }
-        let expectedLine: UInt = 5254
+        func testRequirementReportsSourceLocation() throws {
+            let member = MockMember<Int, Void, Void>(name: "save(_:)")
+            let history = member.callHistory { _ in true }
+            let expectedLine: UInt = 5254
 
-        try XCTExpectFailure(
-            "The empty-history failure is intentional",
-            strict: true,
-            failingBlock: {
-                XCTAssertThrowsError(try history.requireLastArgument(file: #filePath, line: expectedLine))
-            },
-            issueMatcher: { issue in
-                issue.compactDescription.contains("Expected at least one matching call to save(_:).")
-                    && issue.sourceCodeContext.location?.lineNumber == Int(expectedLine)
-            }
-        )
-    }
+            try XCTExpectFailure(
+                "The empty-history failure is intentional",
+                strict: true,
+                failingBlock: {
+                    XCTAssertThrowsError(try history.requireLastArgument(file: #filePath, line: expectedLine))
+                },
+                issueMatcher: { issue in
+                    issue.compactDescription.contains("Expected at least one matching call to save(_:).")
+                        && issue.sourceCodeContext.location?.lineNumber == Int(expectedLine)
+                }
+            )
+        }
     #endif
 }

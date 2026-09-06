@@ -3,7 +3,7 @@ import MocksmithTesting
 import Testing
 
 #if canImport(ObjectiveC)
-import Foundation
+    import Foundation
 #endif
 
 @Mockable private protocol GenericRepositorySample {
@@ -45,12 +45,12 @@ private struct SampleIdentifier: SampleIdentifiedValue, Equatable {
 }
 
 #if canImport(ObjectiveC)
-@objc
-@Mockable private protocol ObjectiveCSampleService: NSObjectProtocol {
-    @objc(fetchValue:) optional func fetch(_ value: Int) -> String?
+    @objc
+    @Mockable private protocol ObjectiveCSampleService: NSObjectProtocol {
+        @objc(fetchValue:) optional func fetch(_ value: Int) -> String?
 
-    @objc optional var title: String? { get }
-}
+        @objc optional var title: String? { get }
+    }
 #endif
 
 @Test private func associatedAndGenericTypesRemainCompileTimeChecked() {
@@ -138,17 +138,17 @@ private struct SampleIdentifier: SampleIdentifiedValue, Equatable {
 }
 
 #if canImport(ObjectiveC)
-@Test private func objectiveCOptionalRequirementsUseTheSameDSL() {
-    let service = ObjectiveCSampleServiceMock()
+    @Test private func objectiveCOptionalRequirementsUseTheSameDSL() {
+        let service = ObjectiveCSampleServiceMock()
 
-    // On Apple platforms the generated mock subclasses NSObject and implements
-    // optional Objective-C methods and properties with their original selectors.
-    Given(service).fetch(.value(1)).willReturn("one")
-    Given(service).title.willReturn("sample")
+        // On Apple platforms the generated mock subclasses NSObject and implements
+        // optional Objective-C methods and properties with their original selectors.
+        Given(service).fetch(.value(1)).willReturn("one")
+        Given(service).title.willReturn("sample")
 
-    #expect(service.fetch(1) == "one")
-    #expect(service.title == "sample")
-    Verify(service, 1).fetch(.value(1))
-    Verify(service, 1).title()
-}
+        #expect(service.fetch(1) == "one")
+        #expect(service.title == "sample")
+        Verify(service, 1).fetch(.value(1))
+        Verify(service, 1).title()
+    }
 #endif

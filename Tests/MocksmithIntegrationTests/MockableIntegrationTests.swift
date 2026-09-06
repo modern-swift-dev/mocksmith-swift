@@ -3,7 +3,7 @@ import MocksmithTesting
 import Testing
 
 #if canImport(ObjectiveC)
-import Foundation
+    import Foundation
 #endif
 
 private final class UncheckedSendableBox<Value>: @unchecked Sendable {
@@ -187,12 +187,12 @@ private struct Identifier: IdentifiedValue, Equatable {
 }
 
 #if canImport(ObjectiveC)
-@objc
-@Mockable private protocol ObjectiveCService: NSObjectProtocol {
-    @objc(fetchValue:) optional func fetch(_ value: Int) -> String?
+    @objc
+    @Mockable private protocol ObjectiveCService: NSObjectProtocol {
+        @objc(fetchValue:) optional func fetch(_ value: Int) -> String?
 
-    @objc optional var title: String? { get }
-}
+        @objc optional var title: String? { get }
+    }
 #endif
 
 @Test private func generatedPropertyStateControlsValuesSettersAndPrecedence() {
@@ -903,14 +903,14 @@ private struct Identifier: IdentifiedValue, Equatable {
 }
 
 #if canImport(ObjectiveC)
-@Test private func generatedObjectiveCMockSubclassesNSObjectAndImplementsOptionalRequirements() {
-    let mock = ObjectiveCServiceMock()
-    Given(mock).fetch(.value(1)).willReturn("one")
-    Given(mock).title.willReturn("title")
+    @Test private func generatedObjectiveCMockSubclassesNSObjectAndImplementsOptionalRequirements() {
+        let mock = ObjectiveCServiceMock()
+        Given(mock).fetch(.value(1)).willReturn("one")
+        Given(mock).title.willReturn("title")
 
-    #expect(mock.fetch(1) == "one")
-    #expect(mock.title == "title")
-    Verify(mock, 1).fetch(.value(1))
-    Verify(mock, 1).title()
-}
+        #expect(mock.fetch(1) == "one")
+        #expect(mock.title == "title")
+        Verify(mock, 1).fetch(.value(1))
+        Verify(mock, 1).title()
+    }
 #endif

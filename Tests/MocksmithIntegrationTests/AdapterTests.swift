@@ -38,65 +38,65 @@ final class AdapterTests: XCTestCase {
     }
 
     #if canImport(Darwin)
-    func testXCTestInOrderAdapterReportsBlockLocation() {
-        let expectedLine: UInt = 4243
-        XCTExpectFailure(
-            "The in-order adapter failure is intentional",
-            strict: true,
-            failingBlock: {
-                MocksmithXCTest.VerifyInOrder(file: #filePath, line: expectedLine) { _ in }
-            },
-            issueMatcher: { issue in
-                issue.compactDescription.contains("In-order verification needs at least one expected invocation")
-                    && issue.sourceCodeContext.location?.lineNumber == Int(expectedLine)
-            }
-        )
-    }
+        func testXCTestInOrderAdapterReportsBlockLocation() {
+            let expectedLine: UInt = 4243
+            XCTExpectFailure(
+                "The in-order adapter failure is intentional",
+                strict: true,
+                failingBlock: {
+                    MocksmithXCTest.VerifyInOrder(file: #filePath, line: expectedLine) { _ in }
+                },
+                issueMatcher: { issue in
+                    issue.compactDescription.contains("In-order verification needs at least one expected invocation")
+                        && issue.sourceCodeContext.location?.lineNumber == Int(expectedLine)
+                }
+            )
+        }
 
-    func testXCTestAdapterReportsMessageAndSourceLocation() {
-        let expectedLine: UInt = 4242
-        XCTExpectFailure(
-            "The adapter failure is intentional",
-            strict: true,
-            failingBlock: {
-                MocksmithXCTest.Verify(FailingMock(), 1, file: #filePath, line: expectedLine).check()
-            },
-            issueMatcher: { issue in
-                issue.compactDescription.contains("adapter failure")
-                    && issue.sourceCodeContext.location?.lineNumber == Int(expectedLine)
-            }
-        )
-    }
+        func testXCTestAdapterReportsMessageAndSourceLocation() {
+            let expectedLine: UInt = 4242
+            XCTExpectFailure(
+                "The adapter failure is intentional",
+                strict: true,
+                failingBlock: {
+                    MocksmithXCTest.Verify(FailingMock(), 1, file: #filePath, line: expectedLine).check()
+                },
+                issueMatcher: { issue in
+                    issue.compactDescription.contains("adapter failure")
+                        && issue.sourceCodeContext.location?.lineNumber == Int(expectedLine)
+                }
+            )
+        }
 
-    func testXCTestNoMoreInteractionsReportsMessageAndSourceLocation() {
-        let expectedLine: UInt = 4244
-        XCTExpectFailure(
-            "The exhaustive adapter failure is intentional",
-            strict: true,
-            failingBlock: {
-                MocksmithXCTest.VerifyNoMoreInteractions(FailingMock(), file: #filePath, line: expectedLine)
-            },
-            issueMatcher: { issue in
-                issue.compactDescription.contains("Unverified interactions: load(*:) ×2, save(*:) ×1")
-                    && issue.sourceCodeContext.location?.lineNumber == Int(expectedLine)
-            }
-        )
-    }
+        func testXCTestNoMoreInteractionsReportsMessageAndSourceLocation() {
+            let expectedLine: UInt = 4244
+            XCTExpectFailure(
+                "The exhaustive adapter failure is intentional",
+                strict: true,
+                failingBlock: {
+                    MocksmithXCTest.VerifyNoMoreInteractions(FailingMock(), file: #filePath, line: expectedLine)
+                },
+                issueMatcher: { issue in
+                    issue.compactDescription.contains("Unverified interactions: load(*:) ×2, save(*:) ×1")
+                        && issue.sourceCodeContext.location?.lineNumber == Int(expectedLine)
+                }
+            )
+        }
 
-    func testXCTestStaticNoMoreInteractionsReportsMessageAndSourceLocation() {
-        let expectedLine: UInt = 4245
-        XCTExpectFailure(
-            "The static exhaustive adapter failure is intentional",
-            strict: true,
-            failingBlock: {
-                MocksmithXCTest.VerifyNoMoreInteractions(FailingStaticMock.self, file: #filePath, line: expectedLine)
-            },
-            issueMatcher: { issue in
-                issue.compactDescription.contains("Unverified interactions: load(*:) ×2, save(*:) ×1")
-                    && issue.sourceCodeContext.location?.lineNumber == Int(expectedLine)
-            }
-        )
-    }
+        func testXCTestStaticNoMoreInteractionsReportsMessageAndSourceLocation() {
+            let expectedLine: UInt = 4245
+            XCTExpectFailure(
+                "The static exhaustive adapter failure is intentional",
+                strict: true,
+                failingBlock: {
+                    MocksmithXCTest.VerifyNoMoreInteractions(FailingStaticMock.self, file: #filePath, line: expectedLine)
+                },
+                issueMatcher: { issue in
+                    issue.compactDescription.contains("Unverified interactions: load(*:) ×2, save(*:) ×1")
+                        && issue.sourceCodeContext.location?.lineNumber == Int(expectedLine)
+                }
+            )
+        }
     #endif
 }
 
