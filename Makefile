@@ -1,4 +1,4 @@
-.PHONY: setup lint format site-install site-dev site-preview site-validate site-build docs docs-release test-linux test-macos test-ios test-swift test test-tvos test-watchos test-all
+.PHONY: setup lint format docs-release test-linux test-macos test-ios test-swift test test-tvos test-watchos test-all
 
 setup:
 
@@ -17,30 +17,6 @@ format:
 
 	mint run --no-install nicklockwood/SwiftFormat . --config .swiftformat --quiet
 	mint run --no-install realm/SwiftLint  --config .swiftlint.yml --fix --quiet
-
-site-install:
-
-	npm --prefix Website ci
-
-site-dev:
-
-	npm --prefix Website run dev
-
-site-preview:
-
-	@test -f .build/site/index.html || { echo ".build/site/index.html is missing; run make docs first" >&2; exit 1; }
-	python3 Scripts/preview-site.py .build/site
-
-site-validate:
-
-	npm --prefix Website run check
-	python3 Scripts/check-static-links.py .build/site
-
-site-build: site-install
-
-	bash Scripts/build-site.sh
-
-docs: site-build
 
 docs-release:
 

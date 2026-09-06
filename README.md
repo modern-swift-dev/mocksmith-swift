@@ -39,7 +39,7 @@ The package supports Swift 6.3 on Linux and iOS 17, macOS 13, tvOS 17, and watch
 
 ## Documentation
 
-Documentation sources remain in this repository. The [central documentation repository](https://github.com/modern-swift-dev/docs) builds and publishes the site daily. Local site builds write generated HTML to `.build/site/`.
+Guides and examples live in [Documentation/Site](Documentation/Site). The [central documentation repository](https://github.com/modern-swift-dev/docs) owns the shared Astro theme, builds the guides and DocC API reference, and publishes them daily. For local builds and previews, follow the [docs README](https://github.com/modern-swift-dev/docs/blob/main/README.md).
 
 The [Mocksmith documentation site](https://modern-swift-dev.github.io/docs/mocksmith-swift/) has the
 [documentation hub](https://modern-swift-dev.github.io/docs/mocksmith-swift/documentation/),
@@ -50,9 +50,8 @@ documentation is available by module: [Mocksmith](https://modern-swift-dev.githu
 [MocksmithTesting](https://modern-swift-dev.github.io/docs/mocksmith-swift/documentation/api/mocksmithtesting/documentation/mocksmithtesting/),
 and [MocksmithXCTest](https://modern-swift-dev.github.io/docs/mocksmith-swift/documentation/api/mocksmithxctest/documentation/mocksmithxctest/).
 
-The authored Astro pages are light-only and work without JavaScript. The generated DocC pages use
-Swift DocC's standard JavaScript and automatic color-scheme behavior. That is the intentional exception
-for API reference pages.
+The shared documentation theme is maintained in the central documentation repository. The generated DocC pages use
+Swift DocC's standard JavaScript and automatic color-scheme behavior.
 
 Build an importable DocC bundle locally with a stable release version:
 
