@@ -35,3 +35,6 @@ playground.xcworkspace
 .swiftpm
 
 .DS_Store
+
+# Generated documentation is published by modern-swift-dev/docs.
+/docs/

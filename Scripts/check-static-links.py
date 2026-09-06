@@ -9,7 +9,7 @@ import sys
 from urllib.parse import unquote, urlsplit
 
 
-SITE_BASE = "/mocksmith-swift/"
+SITE_BASE = "/docs/mocksmith-swift/"
 
 
 class LinkParser(HTMLParser):

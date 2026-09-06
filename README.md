@@ -39,14 +39,16 @@ The package supports Swift 6.3 on Linux and iOS 17, macOS 13, tvOS 17, and watch
 
 ## Documentation
 
-The [Mocksmith documentation site](https://modern-swift-dev.github.io/mocksmith-swift/) has the
-[documentation hub](https://modern-swift-dev.github.io/mocksmith-swift/documentation/),
-[getting-started guide](https://modern-swift-dev.github.io/mocksmith-swift/documentation/getting-started/),
-and [code examples](https://modern-swift-dev.github.io/mocksmith-swift/examples/). The generated API
-documentation is available by module: [Mocksmith](https://modern-swift-dev.github.io/mocksmith-swift/documentation/api/mocksmith/documentation/mocksmith/),
-[MocksmithCombine](https://modern-swift-dev.github.io/mocksmith-swift/documentation/api/mocksmithcombine/documentation/mocksmithcombine/),
-[MocksmithTesting](https://modern-swift-dev.github.io/mocksmith-swift/documentation/api/mocksmithtesting/documentation/mocksmithtesting/),
-and [MocksmithXCTest](https://modern-swift-dev.github.io/mocksmith-swift/documentation/api/mocksmithxctest/documentation/mocksmithxctest/).
+Documentation sources remain in this repository. The [central documentation repository](https://github.com/modern-swift-dev/docs) builds and publishes the site daily. Local site builds write generated HTML to `.build/site/`.
+
+The [Mocksmith documentation site](https://modern-swift-dev.github.io/docs/mocksmith-swift/) has the
+[documentation hub](https://modern-swift-dev.github.io/docs/mocksmith-swift/documentation/),
+[getting-started guide](https://modern-swift-dev.github.io/docs/mocksmith-swift/documentation/getting-started/),
+and [code examples](https://modern-swift-dev.github.io/docs/mocksmith-swift/examples/). The generated API
+documentation is available by module: [Mocksmith](https://modern-swift-dev.github.io/docs/mocksmith-swift/documentation/api/mocksmith/documentation/mocksmith/),
+[MocksmithCombine](https://modern-swift-dev.github.io/docs/mocksmith-swift/documentation/api/mocksmithcombine/documentation/mocksmithcombine/),
+[MocksmithTesting](https://modern-swift-dev.github.io/docs/mocksmith-swift/documentation/api/mocksmithtesting/documentation/mocksmithtesting/),
+and [MocksmithXCTest](https://modern-swift-dev.github.io/docs/mocksmith-swift/documentation/api/mocksmithxctest/documentation/mocksmithxctest/).
 
 The authored Astro pages are light-only and work without JavaScript. The generated DocC pages use
 Swift DocC's standard JavaScript and automatic color-scheme behavior. That is the intentional exception
@@ -61,7 +63,7 @@ make docs-release VERSION=1.0.1
 This creates `build/Mocksmith-Documentation-1.0.1.zip`. New GitHub releases include the same ZIP, containing `Mocksmith.doccarchive`, `MocksmithCombine.doccarchive`, `MocksmithTesting.doccarchive`, and `MocksmithXCTest.doccarchive` beneath a versioned top-level folder. Download and unzip the release asset, then open any `.doccarchive` in Xcode; it appears in Xcode's Imported Documentation browser.
 
 For progressive, runnable examples covering basic through advanced mocking, see the
-[samples guide](samples/README.md) or the site's [examples](https://modern-swift-dev.github.io/mocksmith-swift/examples/).
+[samples guide](samples/README.md) or the site's [examples](https://modern-swift-dev.github.io/docs/mocksmith-swift/examples/).
 
 ## Basic usage
 

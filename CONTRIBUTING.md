@@ -2,16 +2,15 @@
 
 ## Publishing the site
 
-Maintainers publish the site as part of the release workflow:
+The documentation sources remain in this repository. The [central documentation repository](https://github.com/modern-swift-dev/docs) builds and publishes them daily at [the module documentation site](https://modern-swift-dev.github.io/docs/mocksmith-swift/). Publish a GitHub release to update the release information on the next scheduled build; publishing is configured in the central repository.
 
-1. Publish the GitHub release.
-2. Run `make site-build`.
-3. Review the generated release data and DocC changes in `docs/`.
-4. Commit `docs/`.
+To build and review documentation locally:
 
-The complete build fetches the latest non-draft, non-prerelease GitHub release, builds the Astro pages,
-and generates the four static DocC sites. It replaces `docs/` and writes `docs/.nojekyll`.
+```sh
+make site-install
+make site-build
+make site-validate
+make site-preview
+```
 
-Before the first publication, configure the repository's Pages source to the `main` branch and `/docs`
-folder in GitHub's [branch publishing configuration](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
-The build does not change that remote Pages setting.
+The build fetches the latest published release, builds the Astro pages and static DocC reference, and checks internal links. Generated HTML is written to `.build/site/` and is ignored by Git. Commit documentation source changes only.

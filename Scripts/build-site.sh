@@ -6,7 +6,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 website_dir="$repo_root/Website"
 astro_output="$website_dir/dist"
-docs_dir="$repo_root/docs"
+docs_dir="$repo_root/.build/site"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/mocksmith-site.XXXXXX")"
 staging_dir="$work_dir/docs"
 backup_dir="$work_dir/previous-docs"
@@ -21,7 +21,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ ! -f "$website_dir/package.json" ]]; then
-    echo "Website/package.json is missing. The Astro site must exist before building docs/." >&2
+    echo "Website/package.json is missing. The Astro site must exist before building .build/site/." >&2
     exit 1
 fi
 
@@ -43,7 +43,7 @@ for index in "${!modules[@]}"; do
     module="${modules[$index]}"
     slug="${slugs[$index]}"
     output="$staging_dir/documentation/api/$slug"
-    hosting_base="mocksmith-swift/documentation/api/$slug"
+    hosting_base="docs/mocksmith-swift/documentation/api/$slug"
     mkdir -p "$(dirname "$output")"
 
     swift package \
@@ -77,6 +77,7 @@ done
 touch "$staging_dir/.nojekyll"
 python3 "$script_dir/check-static-links.py" "$staging_dir"
 
+mkdir -p "$(dirname "$docs_dir")"
 if [[ -e "$docs_dir" ]]; then
     mv "$docs_dir" "$backup_dir"
     docs_replaced=true

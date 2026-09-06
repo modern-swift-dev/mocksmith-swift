@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
-SITE_BASE = "/mocksmith-swift"
+SITE_BASE = "/docs/mocksmith-swift"
 
 
 class BasePathHandler(SimpleHTTPRequestHandler):

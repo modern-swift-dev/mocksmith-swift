@@ -28,13 +28,13 @@ site-dev:
 
 site-preview:
 
-	@test -f docs/index.html || { echo "docs/index.html is missing; run make docs first" >&2; exit 1; }
-	python3 Scripts/preview-site.py docs
+	@test -f .build/site/index.html || { echo ".build/site/index.html is missing; run make docs first" >&2; exit 1; }
+	python3 Scripts/preview-site.py .build/site
 
 site-validate:
 
 	npm --prefix Website run check
-	python3 Scripts/check-static-links.py docs
+	python3 Scripts/check-static-links.py .build/site
 
 site-build: site-install
 

@@ -3,7 +3,7 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   site: "https://modern-swift-dev.github.io",
-  base: "/mocksmith-swift",
+  base: "/docs/mocksmith-swift",
   output: "static",
   vite: {
     plugins: [tailwindcss()],
