@@ -6,14 +6,14 @@ on:
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     container: swift:6.3
     steps:
       - uses: actions/checkout@v4
       - run: swift test
 
   apple:
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     strategy:
