@@ -8,7 +8,9 @@ private final class ReleaseProbe: Sendable {
     init(checkAccess: @escaping @Sendable () -> Void, released: DispatchSemaphore) {
         onRelease = {
             let accessed = DispatchSemaphore(value: 0)
-            DispatchQueue.global().async {
+            // Parallel tests block while waiting here. Use a dedicated thread so
+            // the access check cannot be starved by shared dispatch pool work.
+            Thread.detachNewThread {
                 checkAccess()
                 accessed.signal()
             }
