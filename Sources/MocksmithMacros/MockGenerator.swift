@@ -78,6 +78,10 @@ struct MockGenerator {
     }
 
     private var members: [GeneratedMember] {
+        let replacements = replacements
+        let access = access
+        let mockType = mockType
+        let configurationIsolation = configurationIsolation
         var result: [GeneratedMember] = []
         for (index, item) in protocolDecl.memberBlock.members.enumerated() {
             if let function = item.decl.as(FunctionDeclSyntax.self) {
@@ -276,12 +280,12 @@ struct MockGenerator {
         let orderedChannels = instance.filter { !$0.usesRegistry }.map { "\($0.channelName).orderedInvocations" }
             + initializers.filter { !$0.usesRegistry }.map { "\($0.channelName).orderedInvocations" }
             + (needsGenericRegistry ? ["_genericMockRegistry.orderedInvocations"] : [])
-        let orderedExpression = orderedChannels.isEmpty ? "[]" : orderedChannels.joined(separator: " + ")
+        let orderedExpression = invocationExpression(orderedChannels)
         let orderedInvocations = "    fileprivate \(isolation)var _mocksmithOrderedInvocations: [_MocksmithInvocation] { \(orderedExpression) }\n\n"
         let unverifiedChannels = instance.filter { !$0.usesRegistry }.map { "\($0.channelName)._mocksmithUnverifiedInvocations" }
             + initializers.filter { !$0.usesRegistry }.map { "\($0.channelName)._mocksmithUnverifiedInvocations" }
             + (needsGenericRegistry ? ["_genericMockRegistry.unverifiedInvocations"] : [])
-        let unverifiedExpression = unverifiedChannels.isEmpty ? "[]" : unverifiedChannels.joined(separator: " + ")
+        let unverifiedExpression = invocationExpression(unverifiedChannels)
         let unverifiedInvocations = "    \(access)\(isolation)var _mocksmithUnverifiedInvocations: [_MocksmithInvocation] { \(unverifiedExpression) }\n\n"
         let staticConformance = staticMembers.isEmpty ? "" : ", StaticMock, InOrderStaticMock, _MocksmithExhaustiveStaticMock, _MocksmithStaticCallInspectable, _MocksmithStaticStateControllable"
         let defaultPolicy = "    \(isolation)private let _mocksmithDefaultPolicy: MockDefaultPolicy\n\n"
@@ -399,6 +403,15 @@ struct MockGenerator {
             + "    \(access)\(isolation)func resetMock(_ scopes: MockScope...) {\(resetSection)\(needsGenericRegistry ? "\n        _genericMockRegistry.reset(scopes)" : "")\n    }"
             + staticDSL
             + witnessSection + "\n}"
+    }
+
+    private func invocationExpression(_ channels: [String]) -> String {
+        switch channels.count {
+            case 0: "[]"
+            case 1: channels[0]
+            // Avoid a growing chain of overloaded + expressions in the generated Swift.
+            default: "[" + channels.joined(separator: ", ") + "].flatMap { $0 }"
+        }
     }
 
     func supportingMembers() -> [DeclSyntax] {

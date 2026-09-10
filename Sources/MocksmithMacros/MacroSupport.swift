@@ -151,8 +151,9 @@ func isNonescapingClosure(_ type: TypeSyntax) -> Bool {
 }
 
 func rewriteType(_ syntax: some SyntaxProtocol, replacements: [String: String], mockType: String) -> String {
+    // Only the rewritten text is used; rebuilding the enclosing declaration is unnecessary.
     TypeReferenceRewriter(replacements: replacements, mockType: mockType)
-        .rewrite(syntax).trimmedDescription
+        .rewrite(syntax, detach: true).trimmedDescription
 }
 
 private final class TypeReferenceRewriter: SyntaxRewriter {

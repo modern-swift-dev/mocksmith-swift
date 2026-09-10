@@ -6,6 +6,11 @@ import SwiftSyntaxMacros
 
 /// Generates a concrete mock peer for an annotated protocol.
 public struct MockableMacro: PeerMacro {
+    /// MockGenerator already formats its source; avoid walking the entire expansion again.
+    public static var formatMode: FormatMode {
+        .disabled
+    }
+
     public static func expansion(
         of node: AttributeSyntax,
         providingPeersOf declaration: some DeclSyntaxProtocol,

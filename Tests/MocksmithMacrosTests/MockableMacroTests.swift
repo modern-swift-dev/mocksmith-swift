@@ -40,21 +40,13 @@
                 final class EmptyMock: Empty, Mock, InOrderMock, _MocksmithExhaustiveMock, _MocksmithCallInspectable, _MocksmithStateControllable {
                     private let _mocksmithDefaultPolicy: MockDefaultPolicy
 
-                    fileprivate var _mocksmithOrderedInvocations: [_MocksmithInvocation] {
-                        []
-                    }
+                    fileprivate var _mocksmithOrderedInvocations: [_MocksmithInvocation] { [] }
 
-                    var _mocksmithUnverifiedInvocations: [_MocksmithInvocation] {
-                        []
-                    }
+                    var _mocksmithUnverifiedInvocations: [_MocksmithInvocation] { [] }
 
-                    init() {
-                        _mocksmithDefaultPolicy = .strict
-                    }
+                    init() { _mocksmithDefaultPolicy = .strict }
 
-                    init(defaults: MockDefaultPolicy) {
-                        _mocksmithDefaultPolicy = defaults
-                    }
+                    init(defaults: MockDefaultPolicy) { _mocksmithDefaultPolicy = defaults }
 
                     init(defaults: MockDefaultPolicy = .strict, configure: (EmptyMock) -> Void) {
                         _mocksmithDefaultPolicy = defaults
@@ -88,27 +80,17 @@
                         fileprivate let mock: EmptyMock
                     }
 
-                    func given() -> Given {
-                        Given(mock: self)
-                    }
-                    func _mocksmithCalls() -> Calls {
-                        Calls(mock: self)
-                    }
-                    func _mocksmithState() -> MockState {
-                        MockState(mock: self)
-                    }
-                    func perform() -> Perform {
-                        Perform(mock: self)
-                    }
+                    func given() -> Given { Given(mock: self) }
+                    func _mocksmithCalls() -> Calls { Calls(mock: self) }
+                    func _mocksmithState() -> MockState { MockState(mock: self) }
+                    func perform() -> Perform { Perform(mock: self) }
                     func orderExpectations(in order: InOrder) -> OrderExpect {
                         OrderExpect(mock: self, order: order)
                     }
                     func verification(
                         count: Count,
                         report: @escaping (VerificationResult) -> Void
-                    ) -> Verify {
-                        Verify(mock: self, count: count, report: report)
-                    }
+                    ) -> Verify { Verify(mock: self, count: count, report: report) }
                     func resetMock(_ scopes: MockScope...) {
                     }
                 }

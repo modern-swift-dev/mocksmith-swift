@@ -4,6 +4,11 @@ import SwiftSyntaxMacros
 
 /// Generates a mock from a protocol surface resolved by the build plugin.
 public struct ResolvedMockableMacro: PeerMacro {
+    /// MockGenerator already formats its source; avoid walking the entire expansion again.
+    public static var formatMode: FormatMode {
+        .disabled
+    }
+
     public static func expansion(
         of node: AttributeSyntax,
         providingPeersOf declaration: some DeclSyntaxProtocol,
