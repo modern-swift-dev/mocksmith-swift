@@ -30,9 +30,19 @@ let package = Package(
         )
     ],
     targets: [
+        .target(
+            name: "MocksmithGeneration",
+            dependencies: [
+                .product(name: "SwiftDiagnostics", package: "swift-syntax"),
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxBuilder", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxMacros", package: "swift-syntax")
+            ]
+        ),
         .macro(
             name: "MocksmithMacros",
             dependencies: [
+                "MocksmithGeneration",
                 .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
                 .product(name: "SwiftSyntax", package: "swift-syntax"),
                 .product(name: "SwiftSyntaxBuilder", package: "swift-syntax"),
@@ -51,8 +61,10 @@ let package = Package(
         .executableTarget(
             name: "MocksmithGenerator",
             dependencies: [
+                "MocksmithGeneration",
                 .product(name: "SwiftParser", package: "swift-syntax"),
-                .product(name: "SwiftSyntax", package: "swift-syntax")
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxMacroExpansion", package: "swift-syntax")
             ]
         ),
         .plugin(
@@ -60,15 +72,17 @@ let package = Package(
             capability: .buildTool(),
             dependencies: ["MocksmithGenerator"]
         ),
-        .testTarget(name: "MocksmithRuntimeTests", dependencies: ["Mocksmith"]),
+        // Xcode links the testable macro object into test bundles; its renderer must also be linked.
+        .testTarget(name: "MocksmithRuntimeTests", dependencies: ["Mocksmith", "MocksmithGeneration"]),
         .testTarget(
             name: "MocksmithCombineTests",
-            dependencies: ["Mocksmith", "MocksmithCombine"]
+            dependencies: ["Mocksmith", "MocksmithCombine", "MocksmithGeneration"]
         ),
         .testTarget(
             name: "MocksmithMacrosTests",
             dependencies: [
                 "MocksmithMacros",
+                "MocksmithGeneration",
                 .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax")
             ]
         ),

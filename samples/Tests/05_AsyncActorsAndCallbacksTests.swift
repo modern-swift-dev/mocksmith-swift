@@ -6,23 +6,23 @@ private enum AsyncSampleFailure: Error, Equatable {
     case unavailable
 }
 
-@Mockable private protocol AsyncSampleService {
+@Mockable(.macro) private protocol AsyncSampleService {
     var current: Int { get async throws(AsyncSampleFailure) }
 
     func fetch(_ key: String) async throws(AsyncSampleFailure) -> Int
 }
 
-@Mockable private protocol SampleWorker: Actor {
+@Mockable(.macro) private protocol SampleWorker: Actor {
     func work(_ value: Int) -> String
 }
 
 @MainActor
-@Mockable private protocol MainActorViewService {
+@Mockable(.macro) private protocol MainActorViewService {
     static var enabled: Bool { get }
     func title() -> String
 }
 
-@Mockable private protocol CallbackSampleService {
+@Mockable(.macro) private protocol CallbackSampleService {
     func load(_ key: Int, completion: (Int) -> Void)
     func transform<Value: Equatable>(_ value: Value, completion: (Value) -> Void)
     func combine(_ first: (Int) -> Void, second: (String) -> Void)

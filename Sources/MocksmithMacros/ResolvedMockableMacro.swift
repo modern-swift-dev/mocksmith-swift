@@ -1,3 +1,4 @@
+import MocksmithGeneration
 import SwiftDiagnostics
 import SwiftSyntax
 import SwiftSyntaxMacros

@@ -9,7 +9,7 @@ Protocol mocks for Swift 6.3
 
 # Strict mocks, checked by the compiler.
 
-Mocksmith generates protocol mocks with Swift macros. There is no Sourcery phase and no generated source to commit.
+Mocksmith's build plugin generates protocol mocks from `@Mockable` declarations before compilation. There is no Sourcery phase and no generated source to commit.
 
 [Get started](/docs/mocksmith-swift/documentation/getting-started/) [See compiled examples](/docs/mocksmith-swift/examples/)
 
@@ -27,7 +27,7 @@ One typed workflow
 
 ## Stub, call, verify.
 
-Attach `@Mockable` to a protocol. The generated peer keeps test setup tied to the protocol declaration.
+Attach `@Mockable` to a protocol and add `MocksmithBuildPlugin` to its declaring target. The generated mock keeps test setup tied to the protocol declaration.
 
 WeatherServiceTests.swift
 
@@ -53,7 +53,7 @@ Capabilities
 
 ### Typed from protocol to assertion
 
-The macro generates the mock and its Given, Perform, Calls, and Verify selectors. Swift checks member names, arguments, and result types.
+Mocksmith generates the mock and its Given, Perform, Calls, and Verify selectors. Swift checks member names, arguments, and result types.
 
 ### Strict until you say otherwise
 

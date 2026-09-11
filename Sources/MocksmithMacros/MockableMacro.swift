@@ -1,4 +1,5 @@
 import Foundation
+import MocksmithGeneration
 import SwiftDiagnostics
 import SwiftSyntax
 import SwiftSyntaxBuilder
@@ -18,6 +19,23 @@ public struct MockableMacro: PeerMacro {
     ) throws -> [DeclSyntax] {
         guard let protocolDecl = declaration.as(ProtocolDeclSyntax.self) else {
             diagnose("@Mockable can only be attached to a protocol", at: declaration, in: context)
+            return []
+        }
+
+        guard let mode = MockGenerationMode(node) else {
+            diagnose("@Mockable generation must be .macro or .buildPlugin", at: node, in: context)
+            return []
+        }
+        if mode == .buildPlugin {
+            if !context.lexicalContext.isEmpty || protocolDecl.modifiers.contains(where: {
+                $0.name.tokenKind == .keyword(.private) || $0.name.tokenKind == .keyword(.fileprivate)
+            }) {
+                diagnose(
+                    "@Mockable(.buildPlugin) requires an internal, package, or public top-level protocol",
+                    at: protocolDecl,
+                    in: context
+                )
+            }
             return []
         }
 

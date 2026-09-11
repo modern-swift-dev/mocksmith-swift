@@ -2,7 +2,7 @@ import Mocksmith
 import MocksmithXCTest
 import XCTest
 
-@Mockable private protocol XCTestGreetingService {
+@Mockable(.macro) private protocol XCTestGreetingService {
     func greeting(for name: String) -> String
 }
 

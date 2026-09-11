@@ -6,7 +6,7 @@ private enum ControlledFailure: Error {
     case unavailable
 }
 
-@Mockable private protocol ControlledService {
+@Mockable(.macro) private protocol ControlledService {
     var token: String? { get set }
     func load() async throws(ControlledFailure) -> String
 }

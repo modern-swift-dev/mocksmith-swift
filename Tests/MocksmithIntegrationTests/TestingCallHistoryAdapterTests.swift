@@ -3,7 +3,7 @@ import MocksmithTesting
 import Testing
 
 @MainActor
-@Mockable private protocol AdapterPendingService {
+@Mockable(.macro) private protocol AdapterPendingService {
     func load() async -> Int
 }
 

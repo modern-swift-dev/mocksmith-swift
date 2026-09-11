@@ -1,7 +1,23 @@
 import Foundation
 
+/// Selects how a protocol's mock is generated.
+public enum MockGeneration {
+    /// Uses compiler macro expansion for direct protocols.
+    /// Protocols with custom inheritance still require the build plugin.
+    case macro
+
+    /// Generates Swift source with `MocksmithBuildPlugin` before compilation.
+    /// Attach the plugin to the target that declares the protocol. The protocol
+    /// must be unconditional, top-level, and internal, package, or public, with
+    /// requirement types accessible from the generated source file.
+    case buildPlugin
+}
+
+/// Generates a strict mock for a protocol.
+/// The default requires `MocksmithBuildPlugin` on the declaring target.
+/// Use `.macro` for private, fileprivate, nested, or conditional direct protocols.
 @attached(peer, names: suffixed(Mock))
-public macro Mockable() = #externalMacro(module: "MocksmithMacros", type: "MockableMacro")
+public macro Mockable(_ generation: MockGeneration = .buildPlugin) = #externalMacro(module: "MocksmithMacros", type: "MockableMacro")
 
 /// Implementation detail used by `MocksmithBuildPlugin`.
 public enum _MocksmithAccess {

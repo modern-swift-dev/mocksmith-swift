@@ -13,7 +13,7 @@ private final class UncheckedSendableBox<Value>: @unchecked Sendable {
     }
 }
 
-@Mockable private protocol WeatherService {
+@Mockable(.macro) private protocol WeatherService {
     var unit: String { get set }
 
     func temperature(for city: String) async throws -> Double
@@ -23,7 +23,7 @@ private final class UncheckedSendableBox<Value>: @unchecked Sendable {
     func format(_ value: Int, prefix: String) -> String
 }
 
-@Mockable private protocol AdvancedService {
+@Mockable(.macro) private protocol AdvancedService {
     init(seed: Int)
 
     static var sharedValue: Int { get set }
@@ -33,17 +33,17 @@ private final class UncheckedSendableBox<Value>: @unchecked Sendable {
     subscript(_ key: String) -> Int { get set }
 }
 
-@Mockable private protocol StatefulStaticService {
+@Mockable(.macro) private protocol StatefulStaticService {
     static var value: Int { get set }
 }
 
-@Mockable private protocol OrderedService {
+@Mockable(.macro) private protocol OrderedService {
     init(seed: Int)
     static func make(_ value: Int) -> String
     func save(_ value: Int)
 }
 
-@Mockable private protocol Repository {
+@Mockable(.macro) private protocol Repository {
     associatedtype Item: Equatable
 
     func load() -> Item
@@ -53,7 +53,7 @@ private final class UncheckedSendableBox<Value>: @unchecked Sendable {
     func mutate(_ value: inout Int)
 }
 
-@Mockable private protocol Worker: Actor {
+@Mockable(.macro) private protocol Worker: Actor {
     func work(_ value: Int) -> String
 }
 
@@ -61,7 +61,7 @@ private enum LoadFailure: Error, Equatable {
     case unavailable
 }
 
-@Mockable private protocol TypedThrower {
+@Mockable(.macro) private protocol TypedThrower {
     func load(_ key: String) throws(LoadFailure) -> Int
     func refresh() throws(LoadFailure)
     func refreshAsync() async throws(LoadFailure)
@@ -69,43 +69,43 @@ private enum LoadFailure: Error, Equatable {
     var message: String { get throws }
 }
 
-@Mockable private protocol GenericService {
+@Mockable(.macro) private protocol GenericService {
     func echo<Value: Equatable>(_ value: Value) -> Value
     func run<Value>(_ body: () throws -> Value) rethrows -> Value
 }
 
-@Mockable private protocol AssociatedOnly<Element> {
+@Mockable(.macro) private protocol AssociatedOnly<Element> {
     associatedtype Element: Sendable where Element: Equatable
 }
 
-@Mockable private protocol StaticGenericService {
+@Mockable(.macro) private protocol StaticGenericService {
     static func identity<Value: Equatable>(_ value: Value) -> Value
 }
 
 @MainActor
-@Mockable private protocol MainActorService {
+@Mockable(.macro) private protocol MainActorService {
     static var enabled: Bool { get }
     func title() -> String
 }
 
 @MainActor
-@Mockable private protocol StatefulMainActorService {
+@Mockable(.macro) private protocol StatefulMainActorService {
     static var enabled: Bool { get }
 }
 
-@Mockable private protocol SelfService: AnyObject {
+@Mockable(.macro) private protocol SelfService: AnyObject {
     static func make() -> Self
     func clone() -> Self
     func isSame(as other: Self) -> Bool
 }
 
-@Mockable private protocol OwnershipService {
+@Mockable(.macro) private protocol OwnershipService {
     func borrow(_ value: borrowing String) -> Int
     func consume(_ value: consuming String) -> Int
     func send(_ value: sending String) -> Int
 }
 
-@Mockable private protocol ProtocolWhereService<Element> where Element: Equatable {
+@Mockable(.macro) private protocol ProtocolWhereService<Element> where Element: Equatable {
     associatedtype Element
     mutating func update() -> Int
 }
@@ -114,7 +114,7 @@ private struct NoncopyableToken: ~Copyable {
     let raw: Int
 }
 
-@Mockable private protocol NoncopyableService: ~Copyable {
+@Mockable(.macro) private protocol NoncopyableService: ~Copyable {
     @MockNoncopyable var token: NoncopyableToken { get set }
 
     @MockNoncopyable subscript(_ key: Int) -> NoncopyableToken { get set }
@@ -127,21 +127,21 @@ private struct NoncopyableToken: ~Copyable {
     @MockNoncopyable func makeThrowing() throws(LoadFailure) -> NoncopyableToken
 }
 
-@Mockable private protocol NoncopyableInitializerService: ~Copyable {
+@Mockable(.macro) private protocol NoncopyableInitializerService: ~Copyable {
     @MockNoncopyable init(_ token: consuming NoncopyableToken)
 }
 
-@Mockable private protocol GenericNoncopyableInitializerService: ~Copyable {
+@Mockable(.macro) private protocol GenericNoncopyableInitializerService: ~Copyable {
     @MockNoncopyable init(_ value: consuming some ~Copyable)
 }
 
-@Mockable private protocol EffectfulAccessorService {
+@Mockable(.macro) private protocol EffectfulAccessorService {
     var current: Int { get async throws(LoadFailure) }
     static subscript(_ key: Int) -> String { get }
     subscript(_ key: some Hashable) -> String { get async throws }
 }
 
-@Mockable private protocol DefaultPolicyService {
+@Mockable(.macro) private protocol DefaultPolicyService {
     var value: Int { get set }
     var optionalValue: Int? { get }
     var swiftOptionalValue: String? { get }
@@ -167,14 +167,14 @@ private struct Identifier: IdentifiedValue, Equatable {
     let id: Int
 }
 
-@Mockable private protocol PackAndOpaqueService {
+@Mockable(.macro) private protocol PackAndOpaqueService {
     init<each Seed>(_ seed: repeat each Seed)
     func describe<each Element>(_ values: repeat each Element) -> Int
     func identifier(_ value: some IdentifiedValue) -> Int
     subscript<each Element>(_ values: repeat each Element) -> Int { get }
 }
 
-@Mockable private protocol CallbackService {
+@Mockable(.macro) private protocol CallbackService {
     func load(_ key: Int, completion: (Int) -> Void)
     func transform<Value: Equatable>(_ value: Value, completion: (Value) -> Void)
     static func load(_ key: String, completion: (String) -> Void)
@@ -182,13 +182,13 @@ private struct Identifier: IdentifiedValue, Equatable {
     func resolve(_ key: Int, compute: () -> Int) -> Int
 }
 
-@Mockable private protocol EscapingCallbackService {
+@Mockable(.macro) private protocol EscapingCallbackService {
     func fetch(completion: @escaping @MainActor @Sendable (Result<[String], Error>) -> Void)
 }
 
 #if canImport(ObjectiveC)
     @objc
-    @Mockable private protocol ObjectiveCService: NSObjectProtocol {
+    @Mockable(.macro) private protocol ObjectiveCService: NSObjectProtocol {
         @objc(fetchValue:) optional func fetch(_ value: Int) -> String?
 
         @objc optional var title: String? { get }

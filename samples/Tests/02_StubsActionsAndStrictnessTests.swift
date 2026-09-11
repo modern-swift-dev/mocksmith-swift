@@ -7,7 +7,7 @@ private enum CatalogFailure: Error, Equatable {
     case timedOut
 }
 
-@Mockable private protocol SequencedCatalogService {
+@Mockable(.macro) private protocol SequencedCatalogService {
     func item(id: Int) throws -> String
     func failingItem(id: Int) throws(CatalogFailure) -> String
     func refresh(_ category: String)

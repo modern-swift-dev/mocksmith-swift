@@ -1,6 +1,8 @@
 import Foundation
+import MocksmithGeneration
 import SwiftParser
 import SwiftSyntax
+import SwiftSyntaxMacroExpansion
 
 private let markerOrder = ["AnyObject", "Sendable", "Actor", "~Copyable", "NSObjectProtocol"]
 private let markerNames = Set(markerOrder)
@@ -69,6 +71,51 @@ private struct Arguments {
     }
 }
 
+private struct MockGenerationInput: Codable, Equatable {
+    let protocolSource: String
+    let mockType: String
+    let conformanceType: String
+    let access: String
+    let isActor: Bool
+}
+
+private struct GenerationInput: Codable, Equatable {
+    let targetModule: String
+    let mocks: [MockGenerationInput]
+    let imports: [String]
+}
+
+private struct GeneratorIdentity: Codable, Equatable {
+    let executablePath: String
+    let modificationDate: Date
+    let size: UInt64
+    let inode: UInt64
+
+    static func current() -> Self? {
+        let executable = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]))
+            .standardizedFileURL.resolvingSymlinksInPath()
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: executable.path),
+              let modificationDate = attributes[.modificationDate] as? Date,
+              let size = attributes[.size] as? UInt64,
+              let inode = attributes[.systemFileNumber] as? UInt64 else {
+            // Without trustworthy tool metadata, render normally on every invocation.
+            return nil
+        }
+        return Self(executablePath: executable.path, modificationDate: modificationDate, size: size, inode: inode)
+    }
+}
+
+private struct GenerationCache: Codable {
+    let generator: GeneratorIdentity?
+    let input: GenerationInput
+    let source: String
+}
+
+private struct PreparedMock {
+    let input: MockGenerationInput
+    let generator: MockGenerator
+}
+
 private struct ModuleInput {
     let name: String
     let paths: [String]
@@ -88,7 +135,7 @@ private struct SourceUnit {
     let path: String
     let tree: SourceFileSyntax
     let importedModules: Set<String>
-    let imports: [ImportDeclSyntax]
+    let imports: CodeBlockItemListSyntax
 
     func location(of node: some SyntaxProtocol) -> SourceDiagnostic.Location {
         let converter = SourceLocationConverter(fileName: path, tree: tree)
@@ -119,7 +166,7 @@ private enum AccessLevel: String {
         if modifiers.contains("private") || modifiers.contains("fileprivate") {
             throw GeneratorError.source(
                 units[record.unit].location(of: record.declaration),
-                "@Mockable inheritance generation requires an internal, package, or public top-level protocol"
+                "@Mockable build plugin generation requires an internal, package, or public top-level protocol"
             )
         }
         if modifiers.contains("public") {
@@ -183,6 +230,7 @@ private final class Scanner {
         let sortedModules = arguments.modules.sorted(by: { $0.name < $1.name })
         let targetInputs = sortedModules.filter { $0.name == targetModule }
         let targetCandidates = try Self.parse(targetInputs, onlyMockableCandidates: true)
+        try validateBuildPluginDeclarations(targetCandidates)
         let parsed = try targetCandidates.contains(where: requiresDependencySources)
             ? Self.parse(sortedModules)
             : targetCandidates
@@ -237,7 +285,7 @@ private final class Scanner {
                         path: path,
                         tree: tree,
                         importedModules: Set(imports.compactMap { $0.path.first?.name.text }),
-                        imports: imports
+                        imports: importStatements(in: tree.statements)
                     )
                 )
             }
@@ -245,13 +293,13 @@ private final class Scanner {
         return units
     }
 
-    func render() throws -> String {
+    func render(cached: GenerationCache?, identity: GeneratorIdentity?) throws -> GenerationCache {
         let roots = protocols.values
             .flatMap(\.self)
             .filter {
                 $0.id.module == targetModule
                     && hasAttribute(named: "Mockable", in: $0.declaration.attributes)
-                    && hasCustomInheritance($0.declaration)
+                    && (hasCustomInheritance($0.declaration) || requestsBuildPlugin($0.declaration))
             }
             .sorted {
                 if $0.id.name != $1.id.name {
@@ -260,7 +308,7 @@ private final class Scanner {
                 return units[$0.unit].path < units[$1.unit].path
             }
 
-        var sections: [String] = []
+        var preparedMocks: [PreparedMock] = []
         var importTexts = Set(["import Mocksmith"])
         for root in roots {
             if protocols[root.id]?.count != 1 {
@@ -268,7 +316,7 @@ private final class Scanner {
             }
             let access = try AccessLevel.read(from: root, units: units)
             let flattened = try flatten(root)
-            sections.append(renderCarrier(root: root, access: access, flattened: flattened))
+            preparedMocks.append(try prepareMock(root: root, access: access, flattened: flattened))
 
             let contributingUnits = Set(flattened.records.map(\.unit) + flattened.aliases.map(\.unit))
             for unitIndex in contributingUnits {
@@ -276,18 +324,25 @@ private final class Scanner {
                 if unit.module != targetModule {
                     importTexts.insert("import \(unit.module)")
                 }
-                for declaration in unit.imports {
-                    guard declaration.path.first?.name.text != targetModule else {
-                        continue
-                    }
-                    importTexts.insert(declaration.trimmedDescription)
+                for statement in importStatements(in: unit.imports, excluding: targetModule) {
+                    importTexts.insert(statement.trimmedDescription)
                 }
             }
         }
 
-        let imports = importTexts.sorted().joined(separator: "\n")
+        let input = GenerationInput(
+            targetModule: targetModule,
+            mocks: preparedMocks.map(\.input),
+            imports: importTexts.sorted()
+        )
+        if let identity, let cached, cached.generator == identity, cached.input == input {
+            return cached
+        }
+        let sections = preparedMocks.map { $0.generator.render() }
+        let imports = input.imports.joined(separator: "\n")
         let body = sections.isEmpty ? "" : "\n\n" + sections.joined(separator: "\n\n")
-        return "// Generated by MocksmithGenerator. Do not edit.\n\(imports)\(body)\n"
+        let source = "// Generated by MocksmithGenerator. Do not edit.\n\(imports)\(body)\n"
+        return GenerationCache(generator: identity, input: input, source: source)
     }
 
     private func flatten(_ root: ProtocolRecord) throws -> FlattenedProtocol {
@@ -490,22 +545,53 @@ private final class Scanner {
         )
     }
 
-    private func renderCarrier(
+    private func prepareMock(
         root: ProtocolRecord,
         access: AccessLevel,
         flattened: FlattenedProtocol
-    ) -> String {
+    ) throws -> PreparedMock {
+        let declaration = try hasCustomInheritance(root.declaration)
+            ? resolvedProtocol(root: root, flattened: flattened)
+            : root.declaration
+        let input = MockGenerationInput(
+            protocolSource: declaration.description,
+            mockType: root.declaration.name.text + "Mock",
+            conformanceType: root.declaration.name.trimmedDescription,
+            access: access == .internalAccess ? "" : access.rawValue + " ",
+            isActor: flattened.markers.contains("Actor")
+        )
+        let generator = MockGenerator(
+            protocolDecl: declaration,
+            isActor: input.isActor,
+            mockType: input.mockType,
+            conformanceType: input.conformanceType,
+            access: input.access
+        )
+        let context = BasicMacroExpansionContext(lexicalContext: [])
+        let valid = generator.validate(in: context)
+        for diagnostic in context.diagnostics {
+            // Resolved requirements may come from several files. Anchor their diagnostics
+            // to the annotated root, whose source is always available to the build system.
+            let location = units[root.unit].location(of: root.declaration)
+            if diagnostic.diagMessage.severity == .error {
+                throw GeneratorError.source(location, diagnostic.message)
+            }
+            FileHandle.standardError.write(Data(
+                "\(location.path):\(location.line):\(location.column): warning: \(diagnostic.message)\n".utf8
+            ))
+        }
+        guard valid else {
+            throw sourceError(at: root, "cannot generate mock for '\(root.id.name)'")
+        }
+        return PreparedMock(input: input, generator: generator)
+    }
+
+    private func resolvedProtocol(
+        root: ProtocolRecord,
+        flattened: FlattenedProtocol
+    ) throws -> ProtocolDeclSyntax {
         let attributeLines = flattened.attributes.map(\.trimmedDescription)
         let carrierName = "__MocksmithResolved_\(sanitize(targetModule))_\(sanitize(root.id.name))"
-        let macroName = "__MocksmithResolve_\(sanitize(targetModule))_\(sanitize(root.id.name))"
-        let macroDeclaration = """
-        @attached(peer, names: named(\(root.declaration.name.trimmedDescription)Mock))
-        private macro \(macroName)(
-            _ protocol: Any.Type,
-            access: _MocksmithAccess
-        ) = #externalMacro(module: "MocksmithMacros", type: "ResolvedMockableMacro")
-        """
-        let macro = "@\(macroName)(\(root.declaration.name.trimmedDescription).self, access: .\(access.rawValue))"
         let primary = root.declaration.primaryAssociatedTypeClause?.trimmedDescription ?? ""
         let inherited = markerOrder.filter(flattened.markers.contains)
         let inheritance = inherited.isEmpty ? "" : ": " + inherited.joined(separator: ", ")
@@ -515,15 +601,18 @@ private final class Scanner {
         let members = flattened.members
             .map { indent($0.decl.trimmedDescription, by: 4) }
             .joined(separator: "\n")
-        let header = (attributeLines + [macro]).joined(separator: "\n")
-        return """
-        \(macroDeclaration)
-
-        \(header)
+        let source = """
+        \(attributeLines.joined(separator: "\n"))
         private protocol \(carrierName)\(primary)\(inheritance)\(whereClause) {
         \(members)
         }
         """
+        let tree = Parser.parse(source: source)
+        guard !tree.hasError,
+              let declaration = tree.statements.first?.item.as(ProtocolDeclSyntax.self) else {
+            throw sourceError(at: root, "cannot parse resolved protocol '\(root.id.name)'")
+        }
+        return declaration
     }
 
     private func sourceError(at record: ProtocolRecord, _ message: String) -> GeneratorError {
@@ -532,6 +621,81 @@ private final class Scanner {
 
     private func sourceError(at record: AliasRecord, _ message: String) -> GeneratorError {
         .source(units[record.unit].location(of: record.declaration), message)
+    }
+}
+
+/// Preserves import conditions without copying unrelated source declarations.
+private func importStatements(
+    in statements: CodeBlockItemListSyntax,
+    excluding module: String? = nil
+) -> CodeBlockItemListSyntax {
+    CodeBlockItemListSyntax(statements.compactMap { item -> CodeBlockItemSyntax? in
+        if let declaration = item.item.as(ImportDeclSyntax.self) {
+            return declaration.path.first?.name.text == module ? nil : item
+        }
+        guard var conditional = item.item.as(IfConfigDeclSyntax.self) else {
+            return nil
+        }
+        var containsImports = false
+        conditional.clauses = IfConfigClauseListSyntax(conditional.clauses.map { clause in
+            var clause = clause
+            let statements = clause.elements?.as(CodeBlockItemListSyntax.self) ?? []
+            let imports = importStatements(in: statements, excluding: module)
+            containsImports = containsImports || !imports.isEmpty
+            clause.elements = .statements(imports)
+            return clause
+        })
+        guard containsImports else {
+            return nil
+        }
+        var result = item
+        result.item = .decl(DeclSyntax(conditional))
+        return result
+    })
+}
+
+private final class BuildPluginDeclarationVisitor: SyntaxVisitor {
+    private var conditionalDepth = 0
+    private(set) var conditionalDeclarations: [ProtocolDeclSyntax] = []
+    private(set) var nestedDeclarations: [ProtocolDeclSyntax] = []
+
+    override func visit(_ node: IfConfigDeclSyntax) -> SyntaxVisitorContinueKind {
+        conditionalDepth += 1
+        return .visitChildren
+    }
+
+    override func visitPost(_ node: IfConfigDeclSyntax) {
+        conditionalDepth -= 1
+    }
+
+    override func visit(_ node: ProtocolDeclSyntax) -> SyntaxVisitorContinueKind {
+        if requestsBuildPlugin(node) {
+            if conditionalDepth > 0 {
+                conditionalDeclarations.append(node)
+            } else if node.parent?.parent?.parent?.is(SourceFileSyntax.self) != true {
+                nestedDeclarations.append(node)
+            }
+        }
+        return .visitChildren
+    }
+}
+
+private func validateBuildPluginDeclarations(_ units: [SourceUnit]) throws {
+    for unit in units {
+        let visitor = BuildPluginDeclarationVisitor(viewMode: .sourceAccurate)
+        visitor.walk(unit.tree)
+        if let declaration = visitor.conditionalDeclarations.first {
+            throw GeneratorError.source(
+                unit.location(of: declaration),
+                "@Mockable build plugin generation requires an unconditional top-level protocol"
+            )
+        }
+        if let declaration = visitor.nestedDeclarations.first {
+            throw GeneratorError.source(
+                unit.location(of: declaration),
+                "@Mockable build plugin generation requires an internal, package, or public top-level protocol"
+            )
+        }
     }
 }
 
@@ -549,6 +713,16 @@ private func hasCustomInheritance(_ declaration: ProtocolDeclSyntax) -> Bool {
     declaration.inheritanceClause?.inheritedTypes.contains {
         !markerNames.contains(simpleName($0.type.trimmedDescription))
     } == true
+}
+
+private func requestsBuildPlugin(_ declaration: ProtocolDeclSyntax) -> Bool {
+    declaration.attributes.contains {
+        guard let attribute = $0.as(AttributeSyntax.self),
+              simpleName(attribute.attributeName.trimmedDescription) == "Mockable" else {
+            return false
+        }
+        return MockGenerationMode(attribute) == .buildPlugin
+    }
 }
 
 private func hasAttribute(named expected: String, in attributes: AttributeListSyntax) -> Bool {
@@ -687,15 +861,19 @@ private func indent(_ value: String, by spaces: Int) -> String {
 
 private func write(_ source: String, to output: URL) throws {
     do {
+        let data = Data(source.utf8)
+        if (try? Data(contentsOf: output)) == data {
+            return
+        }
         try FileManager.default.createDirectory(
             at: output.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try Data(source.utf8).write(to: output, options: .atomic)
+        try data.write(to: output, options: .atomic)
     } catch {
         throw GeneratorError.source(
             .init(path: output.path, line: 1, column: 1),
-            "cannot write generated source: \(error.localizedDescription)"
+            "cannot write generated output: \(error.localizedDescription)"
         )
     }
 }
@@ -703,7 +881,16 @@ private func write(_ source: String, to output: URL) throws {
 do {
     let arguments = try Arguments(Array(CommandLine.arguments.dropFirst()))
     let scanner = try Scanner(arguments: arguments)
-    try write(scanner.render(), to: arguments.output)
+    // Keep advisory cache state private to the work directory. SwiftPM bundles
+    // non-Swift plugin outputs as resources, so only the Swift file is declared.
+    let cacheURL = arguments.output.appendingPathExtension("cache.json")
+    let cached = (try? Data(contentsOf: cacheURL)).flatMap { try? JSONDecoder().decode(GenerationCache.self, from: $0) }
+    let generated = try scanner.render(cached: cached, identity: GeneratorIdentity.current())
+    try write(generated.source, to: arguments.output)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let cacheData = try encoder.encode(generated)
+    try write(String(decoding: cacheData, as: UTF8.self), to: cacheURL)
 } catch let GeneratorError.usage(message) {
     FileHandle.standardError.write(Data("MocksmithGenerator: \(message)\n".utf8))
     exit(2)

@@ -13,7 +13,7 @@ private struct MacroDiagnostic: DiagnosticMessage {
     }
 }
 
-func diagnose(
+package func diagnose(
     _ message: String,
     at node: some SyntaxProtocol,
     in context: some MacroExpansionContext

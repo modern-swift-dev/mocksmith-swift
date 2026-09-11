@@ -1,6 +1,6 @@
 # Mocksmith
 
-`Mocksmith` creates strict protocol mocks at compile time with Swift 6.3 macros. It takes inspiration from [SwiftyMocky](https://github.com/MakeAWishFoundation/SwiftyMocky), without Sourcery or checked-in generated source files.
+`Mocksmith` creates strict protocol mocks at compile time with Swift 6.3. Annotate protocols with `@Mockable`; the build plugin generates their implementations before compilation. It takes inspiration from [SwiftyMocky](https://github.com/MakeAWishFoundation/SwiftyMocky), without Sourcery or checked-in generated source files.
 
 Source code, issues, and releases live in the canonical [modern-swift-dev/mocksmith-swift repository](https://github.com/modern-swift-dev/mocksmith-swift).
 
@@ -17,7 +17,7 @@ dependencies: [
 ]
 ```
 
-Then add `Mocksmith`, exactly one runner adapter, and the build plugin. Attach the plugin to every target that declares an inherited `@Mockable` protocol:
+Then add `Mocksmith`, exactly one runner adapter, and the build plugin. Attach the plugin to every target that uses the default `@Mockable`:
 
 ```swift
 .testTarget(
@@ -33,7 +33,20 @@ Then add `Mocksmith`, exactly one runner adapter, and the build plugin. Attach t
 )
 ```
 
-The plugin resolves inherited protocols and composition aliases from the target and its reachable SwiftPM source dependencies. Direct protocols still use the macro alone.
+`@Mockable` defaults to `.buildPlugin`. The plugin generates complete mocks as Swift source before compilation, avoiding repeated compiler macro expansion of their implementations. It also resolves inherited protocols and composition aliases from the target and its reachable SwiftPM source dependencies.
+
+The plugin must be attached to the target that declares each protocol, including SwiftPM dependency targets built from an Xcode app. The default requires unconditional, top-level `internal`, `package`, or `public` protocols whose requirement types are accessible from the generated source file.
+
+When migrating existing direct mocks, add the plugin to their declaring targets. For `private`, `fileprivate`, nested, or conditional direct protocols, explicitly opt into compiler macro expansion with `@Mockable(.macro)`:
+
+```swift
+@Mockable(.macro)
+private protocol WeatherService {
+    func temperature(for city: String) async throws -> Double
+}
+```
+
+Direct protocols using `.macro` do not require the plugin. Protocols with custom inheritance still require it.
 
 The package supports Swift 6.3 on Linux and iOS 17, macOS 13, tvOS 17, and watchOS 10 or newer.
 
@@ -297,7 +310,7 @@ This applies to `rethrows` too. Multiple ordinary nonescaping closure parameters
 
 ## Inherited protocols and composition aliases
 
-Attach `@Mockable` to the child protocol. The build plugin recursively collects requirements from parent protocols in the same package or a reachable SwiftPM source dependency:
+Attach `@Mockable` to the child protocol. The build plugin recursively collects requirements from parent protocols in the same package or a reachable SwiftPM source dependency and emits the complete mock directly as Swift source:
 
 ```swift
 protocol Parent {
@@ -329,7 +342,7 @@ import ExternalServices
 protocol LocalService: ExternalServices.Service {}
 ```
 
-Inherited mocks must be top-level `internal`, `package`, or `public` protocols, and their requirement types must be visible from generated source. Parent protocols from another package must be `public`. Direct, non-inherited mocks retain `private` and `fileprivate` support.
+Inherited mocks must be unconditional, top-level `internal`, `package`, or `public` protocols, and their requirement types must be visible from generated source. Parent protocols from another package must be `public`. Use `@Mockable(.macro)` for `private`, `fileprivate`, nested, or conditional direct protocols.
 
 ## Objective-C protocols
 

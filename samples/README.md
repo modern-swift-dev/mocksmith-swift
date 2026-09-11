@@ -10,7 +10,7 @@ From the repository root:
 swift test
 ```
 
-The package requires Swift 6.3. Applications normally add `Mocksmith` and exactly one verification adapter to their test target. Targets declaring inherited `@Mockable` protocols also attach the build plugin:
+The package requires Swift 6.3. Applications normally add `Mocksmith` and exactly one verification adapter to their test target. Attach the build plugin to every target declaring default `@Mockable` protocols:
 
 ```swift
 .testTarget(
@@ -25,6 +25,8 @@ The package requires Swift 6.3. Applications normally add `Mocksmith` and exactl
     ]
 )
 ```
+
+`@Mockable` defaults to plugin generation for unconditional, top-level `internal`, `package`, or `public` protocols with requirement types accessible from the generated source file. When migrating existing mocks, attach the plugin to their declaring targets. Use `@Mockable(.macro)` for private, fileprivate, nested, or conditional direct protocols; these explicit compiler macros do not require the plugin. Custom inheritance still requires the plugin.
 
 ## Core workflow
 

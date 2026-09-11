@@ -31,7 +31,7 @@
         func testEmptyProtocol() {
             assertMacroExpansion(
                 """
-                @Mockable
+                @Mockable(.macro)
                 protocol Empty {}
                 """,
                 expandedSource: """
@@ -97,6 +97,90 @@
                 """,
                 macros: macros
             )
+        }
+
+        func testDefersDefaultBuildPluginGeneration() {
+            assertMacroExpansion(
+                """
+                @Mockable
+                protocol Service {
+                    func value() -> Int
+                }
+                """,
+                expandedSource: """
+                protocol Service {
+                    func value() -> Int
+                }
+                """,
+                macros: macros
+            )
+        }
+
+        func testDefersExplicitBuildPluginGeneration() {
+            assertMacroExpansion(
+                """
+                @Mockable(.buildPlugin)
+                protocol Service {
+                    func value() -> Int
+                }
+                """,
+                expandedSource: """
+                protocol Service {
+                    func value() -> Int
+                }
+                """,
+                macros: macros
+            )
+        }
+
+        func testRejectsBuildPluginGenerationForPrivateProtocols() {
+            for attribute in ["@Mockable", "@Mockable(.buildPlugin)"] {
+                for access in ["private", "fileprivate"] {
+                    assertMacroExpansion(
+                        """
+                        \(attribute)
+                        \(access) protocol Service {}
+                        """,
+                        expandedSource: """
+                        \(access) protocol Service {}
+                        """,
+                        diagnostics: [
+                            DiagnosticSpec(
+                                message: "@Mockable(.buildPlugin) requires an internal, package, or public top-level protocol",
+                                line: 1,
+                                column: 1
+                            )
+                        ],
+                        macros: macros
+                    )
+                }
+            }
+        }
+
+        func testRejectsBuildPluginGenerationForNestedProtocols() {
+            for attribute in ["@Mockable", "@Mockable(.buildPlugin)"] {
+                assertMacroExpansion(
+                    """
+                    enum Namespace {
+                        \(attribute)
+                        protocol Service {}
+                    }
+                    """,
+                    expandedSource: """
+                    enum Namespace {
+                        protocol Service {}
+                    }
+                    """,
+                    diagnostics: [
+                        DiagnosticSpec(
+                            message: "@Mockable(.buildPlugin) requires an internal, package, or public top-level protocol",
+                            line: 2,
+                            column: 5
+                        )
+                    ],
+                    macros: macros
+                )
+            }
         }
 
         func testDefersCustomProtocolInheritanceToBuildPlugin() {
@@ -210,7 +294,7 @@
             }
             """
             let protocolDecl = try XCTUnwrap(declaration.as(ProtocolDeclSyntax.self))
-            let attribute: AttributeSyntax = "@Mockable"
+            let attribute: AttributeSyntax = "@Mockable(.macro)"
             let context = BasicMacroExpansionContext(lexicalContext: [])
 
             let source = try XCTUnwrap(
@@ -560,7 +644,7 @@
         func testDiagnosesSwiftInvalidNoncopyableAssociatedType() {
             assertMacroExpansion(
                 """
-                @Mockable
+                @Mockable(.macro)
                 protocol Service {
                     associatedtype Value: ~Copyable
                 }
@@ -580,7 +664,7 @@
         func testDiagnosesBorrowedMultiargumentNoncopyableRequirement() {
             assertMacroExpansion(
                 """
-                @Mockable
+                @Mockable(.macro)
                 protocol Service: ~Copyable {
                     @MockNoncopyable
                     func inspect(_ token: borrowing Token, context: Int) -> Int
@@ -605,7 +689,7 @@
         func testDiagnosesNonescapingClosureOnNoncopyableRequirement() {
             assertMacroExpansion(
                 """
-                @Mockable
+                @Mockable(.macro)
                 protocol Service: ~Copyable {
                     @MockNoncopyable
                     func run(_ body: () -> Void)
@@ -626,7 +710,7 @@
         func testDiagnosesSettableParameterPackSubscript() {
             assertMacroExpansion(
                 """
-                @Mockable
+                @Mockable(.macro)
                 protocol Service {
                     subscript<each Value>(_ values: repeat each Value) -> Int { get set }
                 }
@@ -646,7 +730,7 @@
         func testDiagnosesGenericSettableNoncopyableSubscript() {
             assertMacroExpansion(
                 """
-                @Mockable
+                @Mockable(.macro)
                 protocol Service: ~Copyable {
                     @MockNoncopyable
                     subscript<Value>(_ value: Value) -> Token { get set }
@@ -667,7 +751,7 @@
         func testDiagnosesGenericReadOnlyMultiargumentNoncopyableSubscript() {
             assertMacroExpansion(
                 """
-                @Mockable
+                @Mockable(.macro)
                 protocol Service: ~Copyable {
                     @MockNoncopyable
                     subscript<Value>(_ value: Value, fallback: Int) -> Token { get }
@@ -735,7 +819,7 @@
 
         private func peerSource(_ source: DeclSyntax, file: StaticString = #filePath, line: UInt = #line) throws -> String {
             let declaration = try XCTUnwrap(source.as(ProtocolDeclSyntax.self), file: file, line: line)
-            let attribute: AttributeSyntax = "@Mockable"
+            let attribute: AttributeSyntax = "@Mockable(.macro)"
             let context = BasicMacroExpansionContext(lexicalContext: [])
             return try XCTUnwrap(
                 MockableMacro.expansion(of: attribute, providingPeersOf: declaration, in: context).first,

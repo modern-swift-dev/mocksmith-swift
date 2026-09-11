@@ -2,7 +2,7 @@ import Mocksmith
 import MocksmithTesting
 import Testing
 
-@Mockable private protocol AdvancedMembersService {
+@Mockable(.macro) private protocol AdvancedMembersService {
     init(seed: Int)
 
     static var sharedValue: Int { get set }
@@ -11,7 +11,7 @@ import Testing
     subscript(_ key: String) -> Int { get set }
 }
 
-@Mockable private protocol RepositoryService {
+@Mockable(.macro) private protocol RepositoryService {
     associatedtype Item: Equatable
 
     func load() -> Item

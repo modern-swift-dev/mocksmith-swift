@@ -6,7 +6,7 @@ private struct NoncopyableSampleToken: ~Copyable {
     let rawValue: Int
 }
 
-@Mockable private protocol NoncopyableSampleService: ~Copyable {
+@Mockable(.macro) private protocol NoncopyableSampleService: ~Copyable {
     /// Named noncopyable types need this marker. Requirements that spell
     /// `~Copyable` directly are selected automatically.
     @MockNoncopyable var token: NoncopyableSampleToken { get }
@@ -16,7 +16,7 @@ private struct NoncopyableSampleToken: ~Copyable {
     @MockNoncopyable func make() -> NoncopyableSampleToken
 }
 
-@Mockable private protocol NoncopyableInitializerSample: ~Copyable {
+@Mockable(.macro) private protocol NoncopyableInitializerSample: ~Copyable {
     @MockNoncopyable init(_ token: consuming NoncopyableSampleToken)
 }
 

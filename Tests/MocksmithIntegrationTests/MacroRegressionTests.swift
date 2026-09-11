@@ -2,12 +2,12 @@ import Mocksmith
 import MocksmithTesting
 import Testing
 
-@Mockable private protocol ThrowingGenericRegression {
+@Mockable(.macro) private protocol ThrowingGenericRegression {
     func run<T>(_ value: T) throws -> T
     func runAsync<T>(_ value: T) async throws -> T
 }
 
-@Mockable private protocol QualifiedAssociatedTypeRegression {
+@Mockable(.macro) private protocol QualifiedAssociatedTypeRegression {
     associatedtype Element
     // Keep the qualified member spelling exercised by this regression.
     // swiftformat:disable:next opaqueGenericParameters
@@ -16,7 +16,7 @@ import Testing
     func label(Element: Element) -> Element
 }
 
-@Mockable private protocol OptionalCallbackRegression {
+@Mockable(.macro) private protocol OptionalCallbackRegression {
     init(callback: (() -> Void)?)
     func run(_ callback: (() -> Void)?) -> Int
     func runSendable(_ callback: (@Sendable () -> Void)?) -> Int

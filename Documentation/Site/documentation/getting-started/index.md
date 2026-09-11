@@ -57,7 +57,18 @@ Package.swift
 )
 ```
 
-The plugin resolves inherited protocols and composition aliases in the test target's reachable SwiftPM source dependencies. A direct protocol can use the macro without plugin work, but attaching the plugin to the test target keeps both cases covered.
+`@Mockable` defaults to `.buildPlugin`, which generates complete mocks as Swift source before compilation and avoids repeated compiler macro expansion of their implementations. The plugin also resolves inherited protocols and composition aliases in the target's reachable SwiftPM source dependencies. Attach it to every target that uses the default `@Mockable`, including SwiftPM dependency targets built from an Xcode app.
+
+The default requires unconditional, top-level `internal`, `package`, or `public` protocols whose requirement types are accessible from the generated source file. When migrating existing direct mocks, add the plugin to their declaring targets. For `private`, `fileprivate`, nested, or conditional direct protocols, explicitly use compiler macro expansion:
+
+```swift
+@Mockable(.macro)
+private protocol WeatherService {
+    func temperature(for city: String) async throws -> Double
+}
+```
+
+Direct protocols using `@Mockable(.macro)` do not require the plugin. Protocols with custom inheritance still require it.
 
 ## First call snapshot
 

@@ -6,24 +6,24 @@ import Testing
     import Foundation
 #endif
 
-@Mockable private protocol GenericRepositorySample {
+@Mockable(.macro) private protocol GenericRepositorySample {
     associatedtype Item: Equatable
 
     func load() -> Item
     func echo<Value: Equatable>(_ value: Value) -> Value
 }
 
-@Mockable private protocol RethrowsSampleService {
+@Mockable(.macro) private protocol RethrowsSampleService {
     func run<Value>(_ body: () throws -> Value) rethrows -> Value
 }
 
-@Mockable private protocol SelfSampleService: AnyObject {
+@Mockable(.macro) private protocol SelfSampleService: AnyObject {
     static func make() -> Self
     func clone() -> Self
     func isSame(as other: Self) -> Bool
 }
 
-@Mockable private protocol OwnershipSampleService {
+@Mockable(.macro) private protocol OwnershipSampleService {
     func borrow(_ value: borrowing String) -> Int
     func consume(_ value: consuming String) -> Int
     func send(_ value: sending String) -> Int
@@ -37,7 +37,7 @@ private struct SampleIdentifier: SampleIdentifiedValue, Equatable {
     let id: Int
 }
 
-@Mockable private protocol PackAndOpaqueSampleService {
+@Mockable(.macro) private protocol PackAndOpaqueSampleService {
     init<each Seed>(_ seed: repeat each Seed)
     func describe<each Element>(_ values: repeat each Element) -> Int
     func identifier(_ value: some SampleIdentifiedValue) -> Int
@@ -46,7 +46,7 @@ private struct SampleIdentifier: SampleIdentifiedValue, Equatable {
 
 #if canImport(ObjectiveC)
     @objc
-    @Mockable private protocol ObjectiveCSampleService: NSObjectProtocol {
+    @Mockable(.macro) private protocol ObjectiveCSampleService: NSObjectProtocol {
         @objc(fetchValue:) optional func fetch(_ value: Int) -> String?
 
         @objc optional var title: String? { get }

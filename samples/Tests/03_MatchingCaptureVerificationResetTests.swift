@@ -8,7 +8,7 @@ private struct ExternalID {
 
 private final class ReferenceItem {}
 
-@Mockable private protocol MatchingService {
+@Mockable(.macro) private protocol MatchingService {
     func identify(_ id: ExternalID) throws -> String
     func owns(_ item: ReferenceItem) -> Bool
     func record(_ value: Int)

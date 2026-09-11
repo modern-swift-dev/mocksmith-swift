@@ -5,14 +5,14 @@ import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
 
 /// Validates a protocol and renders its generated mock implementation.
-struct MockGenerator {
+package struct MockGenerator {
     let protocolDecl: ProtocolDeclSyntax
     let isActor: Bool
     let mockTypeOverride: String?
     let conformanceTypeOverride: String?
     let accessOverride: String?
 
-    init(
+    package init(
         protocolDecl: ProtocolDeclSyntax,
         isActor: Bool,
         mockType: String? = nil,
@@ -99,7 +99,7 @@ struct MockGenerator {
         return result
     }
 
-    func validate(in context: some MacroExpansionContext) -> Bool {
+    package func validate(in context: some MacroExpansionContext) -> Bool {
         var valid = true
         if protocolDecl.genericWhereClause?.trimmedDescription.contains("~Copyable") == true {
             diagnose("noncopyable associated-type constraints are not supported yet", at: protocolDecl, in: context)
@@ -191,7 +191,7 @@ struct MockGenerator {
         return valid
     }
 
-    func render() -> String {
+    package func render() -> String {
         let associated = associatedTypes
         let genericParts = associated.map { declaration -> String in
             let inherited = declaration.inheritanceClause?.inheritedTypes.map {
