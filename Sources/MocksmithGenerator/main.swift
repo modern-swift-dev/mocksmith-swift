@@ -108,7 +108,60 @@ private struct GeneratorIdentity: Codable, Equatable {
 private struct GenerationCache: Codable {
     let generator: GeneratorIdentity?
     let input: GenerationInput
+    let snapshot: SourceSnapshot?
+    let usesDependencySources: Bool?
     let source: String
+}
+
+private struct SourceInput: Codable, Equatable {
+    let module: String
+    let path: String
+    let source: String
+}
+
+private struct SourceSnapshot: Codable, Equatable {
+    let modules: [String]
+    let sources: [SourceInput]
+
+    init(targetOf arguments: Arguments) throws {
+        modules = Set(arguments.modules.map(\.name)).sorted()
+        sources = try Self.read(arguments.modules.filter { $0.name == arguments.targetModule })
+    }
+
+    init(modules: [String], sources: [SourceInput]) {
+        self.modules = modules
+        self.sources = sources
+    }
+
+    func includingDependencies(from arguments: Arguments) throws -> Self {
+        let dependencies = try Self.read(arguments.modules.filter { $0.name != arguments.targetModule })
+        return Self(modules: modules, sources: (sources + dependencies).sorted {
+            ($0.module, $0.path) < ($1.module, $1.path)
+        })
+    }
+
+    private static func read(_ modules: [ModuleInput]) throws -> [SourceInput] {
+        var sources: [SourceInput] = []
+        for module in modules.sorted(by: { $0.name < $1.name }) {
+            for path in module.paths.sorted() {
+                let source: String
+                do {
+                    source = try String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8)
+                } catch {
+                    throw GeneratorError.source(
+                        .init(path: path, line: 1, column: 1),
+                        "cannot read source: \(error.localizedDescription)"
+                    )
+                }
+                // Read every input in the relevant modules: a previously irrelevant
+                // file may gain a declaration, even with unchanged size and mtime.
+                if source.contains("Mockable") || source.contains("protocol") || source.contains("typealias") {
+                    sources.append(SourceInput(module: module.name, path: path, source: source))
+                }
+            }
+        }
+        return sources
+    }
 }
 
 private struct PreparedMock {
@@ -219,20 +272,20 @@ private final class Scanner {
     private let targetModule: String
     private let units: [SourceUnit]
     private let availableSourceModules: Set<String>
+    private let usesDependencySources: Bool
     private var protocols: [DeclarationID: [ProtocolRecord]] = [:]
     private var aliases: [DeclarationID: [AliasRecord]] = [:]
 
-    init(arguments: Arguments) throws {
-        let targetModule = arguments.targetModule
+    init(targetModule: String, snapshot: SourceSnapshot) throws {
         self.targetModule = targetModule
-        availableSourceModules = Set(arguments.modules.map(\.name))
+        availableSourceModules = Set(snapshot.modules)
 
-        let sortedModules = arguments.modules.sorted(by: { $0.name < $1.name })
-        let targetInputs = sortedModules.filter { $0.name == targetModule }
-        let targetCandidates = try Self.parse(targetInputs, onlyMockableCandidates: true)
+        let targetInputs = snapshot.sources.filter { $0.module == targetModule }
+        let targetCandidates = Self.parse(targetInputs, onlyMockableCandidates: true)
         try validateBuildPluginDeclarations(targetCandidates)
-        let parsed = try targetCandidates.contains(where: requiresDependencySources)
-            ? Self.parse(sortedModules)
+        usesDependencySources = targetCandidates.contains(where: requiresDependencySources)
+        let parsed = usesDependencySources
+            ? Self.parse(snapshot.sources)
             : targetCandidates
         units = parsed
 
@@ -258,42 +311,38 @@ private final class Scanner {
     }
 
     private static func parse(
-        _ modules: [ModuleInput],
+        _ sources: [SourceInput],
         onlyMockableCandidates: Bool = false
-    ) throws -> [SourceUnit] {
+    ) -> [SourceUnit] {
         var units: [SourceUnit] = []
-        for module in modules {
-            for path in module.paths.sorted() {
-                let url = URL(fileURLWithPath: path)
-                let source: String
-                do {
-                    source = try String(contentsOf: url, encoding: .utf8)
-                } catch {
-                    throw GeneratorError.source(
-                        .init(path: path, line: 1, column: 1),
-                        "cannot read source: \(error.localizedDescription)"
-                    )
-                }
-                if onlyMockableCandidates, !source.contains("Mockable") {
+        for input in sources {
+            if onlyMockableCandidates {
+                guard input.source.contains("Mockable") else {
                     continue
                 }
-                let tree = Parser.parse(source: source)
-                let imports = tree.statements.compactMap { $0.item.as(ImportDeclSyntax.self) }
-                units.append(
-                    SourceUnit(
-                        module: module.name,
-                        path: path,
-                        tree: tree,
-                        importedModules: Set(imports.compactMap { $0.path.first?.name.text }),
-                        imports: importStatements(in: tree.statements)
-                    )
-                )
+            } else if !input.source.contains("protocol"), !input.source.contains("typealias") {
+                continue
             }
+            let tree = Parser.parse(source: input.source)
+            let imports = tree.statements.compactMap { $0.item.as(ImportDeclSyntax.self) }
+            units.append(
+                SourceUnit(
+                    module: input.module,
+                    path: input.path,
+                    tree: tree,
+                    importedModules: Set(imports.compactMap { $0.path.first?.name.text }),
+                    imports: importStatements(in: tree.statements)
+                )
+            )
         }
         return units
     }
 
-    func render(cached: GenerationCache?, identity: GeneratorIdentity?) throws -> GenerationCache {
+    func render(cached: GenerationCache?, identity: GeneratorIdentity?, snapshot: SourceSnapshot) throws -> GenerationCache {
+        let snapshot = usesDependencySources ? snapshot : SourceSnapshot(
+            modules: snapshot.modules,
+            sources: snapshot.sources.filter { $0.module == targetModule }
+        )
         let roots = protocols.values
             .flatMap(\.self)
             .filter {
@@ -336,13 +385,19 @@ private final class Scanner {
             imports: importTexts.sorted()
         )
         if let identity, let cached, cached.generator == identity, cached.input == input {
-            return cached
+            return GenerationCache(
+                generator: identity, input: input, snapshot: snapshot,
+                usesDependencySources: usesDependencySources, source: cached.source
+            )
         }
         let sections = preparedMocks.map { $0.generator.render() }
         let imports = input.imports.joined(separator: "\n")
         let body = sections.isEmpty ? "" : "\n\n" + sections.joined(separator: "\n\n")
         let source = "// Generated by MocksmithGenerator. Do not edit.\n\(imports)\(body)\n"
-        return GenerationCache(generator: identity, input: input, source: source)
+        return GenerationCache(
+            generator: identity, input: input, snapshot: snapshot,
+            usesDependencySources: usesDependencySources, source: source
+        )
     }
 
     private func flatten(_ root: ProtocolRecord) throws -> FlattenedProtocol {
@@ -859,9 +914,8 @@ private func indent(_ value: String, by spaces: Int) -> String {
         .joined(separator: "\n")
 }
 
-private func write(_ source: String, to output: URL) throws {
+private func write(_ data: Data, to output: URL) throws {
     do {
-        let data = Data(source.utf8)
         if (try? Data(contentsOf: output)) == data {
             return
         }
@@ -880,17 +934,35 @@ private func write(_ source: String, to output: URL) throws {
 
 do {
     let arguments = try Arguments(Array(CommandLine.arguments.dropFirst()))
-    let scanner = try Scanner(arguments: arguments)
     // Keep advisory cache state private to the work directory. SwiftPM bundles
     // non-Swift plugin outputs as resources, so only the Swift file is declared.
     let cacheURL = arguments.output.appendingPathExtension("cache.json")
     let cached = (try? Data(contentsOf: cacheURL)).flatMap { try? JSONDecoder().decode(GenerationCache.self, from: $0) }
-    let generated = try scanner.render(cached: cached, identity: GeneratorIdentity.current())
-    try write(generated.source, to: arguments.output)
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    let cacheData = try encoder.encode(generated)
-    try write(String(decoding: cacheData, as: UTF8.self), to: cacheURL)
+    let identity = GeneratorIdentity.current()
+    let targetSnapshot = try SourceSnapshot(targetOf: arguments)
+    let directCacheHit = identity != nil && cached?.generator == identity
+        && cached?.input.targetModule == arguments.targetModule
+        && cached?.usesDependencySources == false && cached?.snapshot == targetSnapshot
+    let snapshot = try directCacheHit ? targetSnapshot : targetSnapshot.includingDependencies(from: arguments)
+    let generated: GenerationCache
+    let cacheHit: Bool
+    if let identity, let cached, cached.generator == identity,
+       cached.input.targetModule == arguments.targetModule,
+       cached.usesDependencySources != nil, cached.snapshot == snapshot {
+        generated = cached
+        cacheHit = true
+    } else {
+        let scanner = try Scanner(targetModule: arguments.targetModule, snapshot: snapshot)
+        generated = try scanner.render(cached: cached, identity: identity, snapshot: snapshot)
+        cacheHit = false
+    }
+    try write(Data(generated.source.utf8), to: arguments.output)
+    if !cacheHit {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let cacheData = try encoder.encode(generated)
+        try write(cacheData, to: cacheURL)
+    }
 } catch let GeneratorError.usage(message) {
     FileHandle.standardError.write(Data("MocksmithGenerator: \(message)\n".utf8))
     exit(2)

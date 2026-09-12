@@ -48,6 +48,8 @@ private protocol WeatherService {
 
 Direct protocols using `.macro` do not require the plugin. Protocols with custom inheritance still require it.
 
+Incremental builds cache import discovery during plugin setup and compare declaration source snapshots before invoking the Swift parser. Both caches check source contents, including additions and removals, and invalidate when the build tool changes. Unchanged mocks retain their output timestamp. The caches live in the plugin work directory; removing build artifacts triggers a fresh scan. Implementation edits in files that also contain declarations may still require parsing, even when the generated mocks stay the same.
+
 The package supports Swift 6.3 on Linux and iOS 17, macOS 13, tvOS 17, and watchOS 10 or newer.
 
 ## Documentation

@@ -128,6 +128,122 @@ protocol Parent {
         assert "stale cached renderer output" not in cache.read_text()
         command[0] = str(generator)
 
+        # A source-content snapshot skips parsing without relying on file mtimes.
+        parent = directory / "Parent.swift"
+        parent.write_text("public protocol Parent { func first() -> Int }\n")
+        declarations.write_text("""import Mocksmith
+import Dependency
+@Mockable protocol Child: Parent {}
+""")
+        command.extend(["--module", "Dependency", str(parent)])
+        inherited = generate()
+        assert "func first() -> Int" in inherited
+        parent_stat = parent.stat()
+        parent.write_text(parent.read_text().replace("first", "other"))
+        os.utime(parent, ns=(parent_stat.st_atime_ns, parent_stat.st_mtime_ns))
+        assert parent.stat().st_size == parent_stat.st_size
+        inherited = generate()
+        assert "func other() -> Int" in inherited
+        assert "func first() -> Int" not in inherited
+
+        # Files that were absent from the snapshot must still be read each run.
+        unrelated.write_text("@Mockable protocol AddedService {}\n")
+        assert "AddedServiceMock" in generate()
+        unrelated.write_text("func unrelated() -> Int { 3 }\n")
+        assert generate() == inherited
+
+        added = directory / "Added.swift"
+        added.write_text("@Mockable protocol NewService {}\n")
+        command.insert(command.index("--module", 6), str(added))
+        assert "NewServiceMock" in generate()
+        command.remove(str(added))
+        added.unlink()
+        assert generate() == inherited
+
+        # Deleting a required parent cannot reuse the previous successful cache.
+        parent_source = parent.read_text()
+        parent.unlink()
+        command.remove(str(parent))
+        command.extend([str(unrelated)])
+        missing_parent = subprocess.run(command, cwd=root, text=True, capture_output=True)
+        assert missing_parent.returncode != 0
+        assert "Parent" in missing_parent.stderr
+        command[-1] = str(parent)
+        parent.write_text(parent_source)
+        assert generate() == inherited
+
+        # Target and available-module identities are part of cache validity.
+        command[4] = "Dependency"
+        assert "ChildMock" not in generate()
+        command[4] = "Fixture"
+        assert generate() == inherited
+        previous_snapshot = json.loads(cache.read_text())["snapshot"]
+        empty = directory / "Empty.swift"
+        empty.write_text("")
+        command.extend(["--module", "Empty", str(empty)])
+        assert generate() == inherited
+        assert json.loads(cache.read_text())["snapshot"] != previous_snapshot
+        del command[-3:]
+
+        # A changed body in a retained file updates the snapshot, but the render
+        # cache still preserves identical generated output and its timestamp.
+        assert generate() == inherited
+        os.utime(output, ns=(1_000_000_000, 1_000_000_000))
+        parent.write_text(parent_source + "func unrelatedBody() -> Int { 1 }\n")
+        assert generate() == inherited
+        assert output.stat().st_mtime_ns == 1_000_000_000
+        refreshed_cache = cache.read_bytes()
+        os.utime(cache, ns=(1_000_000_000, 1_000_000_000))
+        assert generate() == inherited
+        assert cache.read_bytes() == refreshed_cache
+        assert cache.stat().st_mtime_ns == 1_000_000_000
+
+        # Snapshot cache hits restore missing or damaged generated files.
+        output.unlink()
+        assert generate() == inherited
+        output.write_text("// damaged output\n")
+        assert generate() == inherited
+        legacy_cache = json.loads(cache.read_text())
+        del legacy_cache["snapshot"]
+        cache.write_text(json.dumps(legacy_cache))
+        assert generate() == inherited
+        assert "snapshot" in json.loads(cache.read_text())
+
+        # Direct mocks depend only on their own module's declarations. Switching
+        # inheritance on or off must change the scope of the cached snapshot.
+        declarations.write_text("""import Mocksmith
+import Dependency
+@Mockable protocol Child {}
+""")
+        direct = generate()
+        direct_cache = json.loads(cache.read_text())
+        assert direct_cache["usesDependencySources"] is False
+        assert all(source["module"] == "Fixture" for source in direct_cache["snapshot"]["sources"])
+        cached = cache.read_bytes()
+        os.utime(cache, ns=(1_000_000_000, 1_000_000_000))
+        parent.write_text(parent.read_text().replace("other", "third"))
+        assert generate() == direct
+        assert cache.read_bytes() == cached
+        assert cache.stat().st_mtime_ns == 1_000_000_000
+
+        declarations.write_text(declarations.read_text().replace("Child {}", "Child: Parent {}"))
+        inherited = generate()
+        assert "func third() -> Int" in inherited
+        assert json.loads(cache.read_text())["usesDependencySources"] is True
+        parent.write_text(parent.read_text().replace("third", "fourth"))
+        inherited = generate()
+        assert "func fourth() -> Int" in inherited
+        assert "func third() -> Int" not in inherited
+
+        declarations.write_text(declarations.read_text().replace("Child: Parent {}", "Child {}"))
+        assert generate() == direct
+        assert json.loads(cache.read_text())["usesDependencySources"] is False
+        legacy_cache = json.loads(cache.read_text())
+        del legacy_cache["usesDependencySources"]
+        cache.write_text(json.dumps(legacy_cache))
+        assert generate() == direct
+        assert json.loads(cache.read_text())["usesDependencySources"] is False
+
         # Both active and inactive conditions must fail explicitly: the build
         # tool does not receive the compiler's conditional compilation settings.
         for annotation in ["@Mockable", "@Mockable(.buildPlugin)"]:
