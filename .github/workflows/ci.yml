@@ -23,6 +23,12 @@ jobs:
           mint bootstrap
       - name: Lint
         run: make lint
+      - name: Verify bundled generator matches its source
+        run: Scripts/build-generator-artifact.sh --check
+      - name: Test bundled generator caching
+        run: python3 Scripts/test-generator.py Tools/MocksmithGenerator.artifactbundle/bin/MocksmithGenerator
+      - name: Test Xcode build-description caching
+        run: python3 Scripts/test-xcode-build-cache.py
 
   linux:
     runs-on: ubuntu-24.04

@@ -9,11 +9,13 @@ private let markerNames = Set(markerOrder)
 
 private struct Arguments {
     let output: URL
+    let cache: URL
     let targetModule: String
     let modules: [ModuleInput]
 
     init(_ values: [String]) throws {
         var output: URL?
+        var cache: URL?
         var targetModule: String?
         var modules: [ModuleInput] = []
         var index = 0
@@ -26,6 +28,13 @@ private struct Arguments {
                         throw GeneratorError.usage("missing value after --output")
                     }
                     output = URL(fileURLWithPath: values[index])
+                    index += 1
+                case "--cache":
+                    index += 1
+                    guard index < values.count else {
+                        throw GeneratorError.usage("missing value after --cache")
+                    }
+                    cache = URL(fileURLWithPath: values[index])
                     index += 1
                 case "--target-module":
                     index += 1
@@ -66,6 +75,7 @@ private struct Arguments {
         }
 
         self.output = output
+        self.cache = cache ?? output.appendingPathExtension("cache.json")
         self.targetModule = targetModule
         self.modules = modules
     }
@@ -934,9 +944,9 @@ private func write(_ data: Data, to output: URL) throws {
 
 do {
     let arguments = try Arguments(Array(CommandLine.arguments.dropFirst()))
-    // Keep advisory cache state private to the work directory. SwiftPM bundles
-    // non-Swift plugin outputs as resources, so only the Swift file is declared.
-    let cacheURL = arguments.output.appendingPathExtension("cache.json")
+    // Prebuild output directories are scanned as target inputs. The plugin keeps
+    // this advisory cache outside that directory so it cannot become a resource.
+    let cacheURL = arguments.cache
     let cached = (try? Data(contentsOf: cacheURL)).flatMap { try? JSONDecoder().decode(GenerationCache.self, from: $0) }
     let identity = GeneratorIdentity.current()
     let targetSnapshot = try SourceSnapshot(targetOf: arguments)

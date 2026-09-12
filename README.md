@@ -50,6 +50,8 @@ Direct protocols using `.macro` do not require the plugin. Protocols with custom
 
 Incremental builds cache import discovery during plugin setup and compare declaration source snapshots before invoking the Swift parser. Both caches check source contents, including additions and removals, and invalidate when the build tool changes. Unchanged mocks retain their output timestamp. The caches live in the plugin work directory; removing build artifacts triggers a fresh scan. Implementation edits in files that also contain declarations may still require parsing, even when the generated mocks stay the same.
 
+On macOS, the plugin runs the bundled universal generator as a prebuild command. This avoids an Xcode issue that hashes per-target build commands in dictionary order, invalidating the build description even when no inputs changed. Only generated Swift files go into the prebuild output directory; import and generation caches stay outside it. Other hosts build the generator from source and use a regular build command.
+
 The package supports Swift 6.3 on Linux and iOS 17, macOS 13, tvOS 17, and watchOS 10 or newer.
 
 ## Documentation

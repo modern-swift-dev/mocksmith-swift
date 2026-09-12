@@ -65,6 +65,27 @@ protocol Parent {
         assert "@_MocksmithResolved" not in generated
         cached = cache.read_bytes()
 
+        # A prebuild plugin must expose only Swift sources, never its JSON cache.
+        prebuild_output = directory / "GeneratedSources" / "Mocksmith.generated.swift"
+        prebuild_cache = directory / "PrivateCache" / "generation.json"
+        prebuild_command = [
+            str(generator), "--output", str(prebuild_output),
+            "--cache", str(prebuild_cache), "--target-module", "Fixture",
+            "--module", "Fixture", str(declarations), str(unrelated),
+        ]
+        subprocess.run(prebuild_command, cwd=root, check=True)
+        assert prebuild_output.read_text() == generated
+        assert prebuild_cache.is_file()
+        assert list(prebuild_output.parent.iterdir()) == [prebuild_output]
+        os.utime(prebuild_output, ns=(1_000_000_000, 1_000_000_000))
+        os.utime(prebuild_cache, ns=(1_000_000_000, 1_000_000_000))
+        subprocess.run(prebuild_command, cwd=root, check=True)
+        assert prebuild_output.stat().st_mtime_ns == 1_000_000_000
+        assert prebuild_cache.stat().st_mtime_ns == 1_000_000_000
+        result = subprocess.run([str(generator), "--cache"], capture_output=True, text=True)
+        assert result.returncode == 2
+        assert "missing value after --cache" in result.stderr
+
         # A fixed timestamp detects rewrites without timing-dependent sleeps.
         os.utime(output, ns=(1_000_000_000, 1_000_000_000))
         os.utime(cache, ns=(1_000_000_000, 1_000_000_000))

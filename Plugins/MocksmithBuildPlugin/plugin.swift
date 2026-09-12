@@ -41,8 +41,10 @@ import PackagePlugin
         try importScanner.save()
         let modules = selectedModules.values.sorted { ($0.moduleName, $0.id) < ($1.moduleName, $1.id) }
 
-        let output = context.pluginWorkDirectoryURL.appending(component: "Mocksmith.generated.swift")
-        var arguments = ["--output", output.path, "--target-module", currentModule.moduleName]
+        let generatedDirectory = context.pluginWorkDirectoryURL.appending(component: "GeneratedSources")
+        let output = generatedDirectory.appending(component: "Mocksmith.generated.swift")
+        let cache = context.pluginWorkDirectoryURL.appending(component: "generation.cache.json")
+        var arguments = ["--output", output.path, "--cache", cache.path, "--target-module", currentModule.moduleName]
         var inputFiles = [URL]()
         var seenFiles = Set<URL>()
 
@@ -60,9 +62,23 @@ import PackagePlugin
         guard !inputFiles.isEmpty else {
             return []
         }
+        let executable = try context.tool(named: "MocksmithGenerator").url
+        #if os(macOS)
+            if ProcessInfo.processInfo.environment["MOCKSMITH_BUILD_GENERATOR_FROM_SOURCE"] != "1" {
+                // Xcode hashes per-target build commands in unordered dictionary order.
+                // Prebuild results avoid that unstable cache key; the generator's content
+                // cache preserves unchanged source timestamps across invocations.
+                return [.prebuildCommand(
+                    displayName: "Generating Mocksmith mocks for \(target.name)",
+                    executable: executable,
+                    arguments: arguments,
+                    outputFilesDirectory: generatedDirectory
+                )]
+            }
+        #endif
         return [.buildCommand(
             displayName: "Generating Mocksmith mocks for \(target.name)",
-            executable: try context.tool(named: "MocksmithGenerator").url,
+            executable: executable,
             arguments: arguments,
             inputFiles: inputFiles,
             outputFiles: [output]

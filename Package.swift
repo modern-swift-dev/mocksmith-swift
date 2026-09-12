@@ -1,7 +1,14 @@
 // swift-tools-version: 6.3
 
 import CompilerPluginSupport
+import Foundation
 import PackageDescription
+
+#if os(macOS)
+    let usePrebuiltGenerator = ProcessInfo.processInfo.environment["MOCKSMITH_BUILD_GENERATOR_FROM_SOURCE"] != "1"
+#else
+    let usePrebuiltGenerator = false
+#endif
 
 let package = Package(
     name: "Mocksmith",
@@ -70,7 +77,7 @@ let package = Package(
         .plugin(
             name: "MocksmithBuildPlugin",
             capability: .buildTool(),
-            dependencies: ["MocksmithGenerator"]
+            dependencies: [usePrebuiltGenerator ? "MocksmithGeneratorPrebuilt" : "MocksmithGenerator"]
         ),
         // Xcode links the testable macro object into test bundles; its renderer must also be linked.
         .testTarget(name: "MocksmithRuntimeTests", dependencies: ["Mocksmith", "MocksmithGeneration"]),
@@ -106,3 +113,10 @@ let package = Package(
     ],
     swiftLanguageModes: [.v6]
 )
+
+if usePrebuiltGenerator {
+    package.targets.append(.binaryTarget(
+        name: "MocksmithGeneratorPrebuilt",
+        path: "Tools/MocksmithGenerator.artifactbundle"
+    ))
+}
