@@ -32,6 +32,7 @@ public final class TransientMockMember<
 
     private let lock = NSLock()
     private var invocations: [UInt64] = []
+    private var recordedSequences: Set<UInt64> = []
     private var verifiedSequences: Set<UInt64> = []
     private var stubs: [Stub] = []
     private var actions: [Action] = []
@@ -174,7 +175,7 @@ public final class TransientMockMember<
 
     public func record() {
         let sequence = nextMockInvocationSequence()
-        lock.withLock { invocations.append(sequence) }
+        lock.withLock { appendInvocation(sequence) }
     }
 
     public var invocationCount: Int {
@@ -200,7 +201,7 @@ public final class TransientMockMember<
     }
 
     public func matchesInvocation(sequence: UInt64) -> Bool {
-        lock.withLock { invocations.contains(sequence) }
+        lock.withLock { recordedSequences.contains(sequence) }
     }
 
     public func verification(count: Count) -> VerificationResult {
@@ -222,6 +223,7 @@ public final class TransientMockMember<
             let retired = (stubs, actions, actionStubs)
             if scopes.contains(.invocations) {
                 invocations.removeAll()
+                recordedSequences.removeAll()
                 verifiedSequences.removeAll()
             }
             if scopes.contains(.stubs) {
@@ -250,7 +252,7 @@ public final class TransientMockMember<
     ) -> TransientStubOutcome<Arguments, Ephemeral, Output>? {
         let sequence = nextMockInvocationSequence()
         let snapshot = lock.withLock { () -> ([Action], [Stub], [ActionStub]) in
-            invocations.append(sequence)
+            appendInvocation(sequence)
             return (actions, stubs, actionStubs)
         }
 
@@ -326,10 +328,15 @@ public final class TransientMockMember<
         }
     }
 
+    /// Must be called while holding `lock`.
+    private func appendInvocation(_ sequence: UInt64) {
+        recordedSequences.insert(sequence)
+        invocations.append(sequence)
+    }
+
     private func markVerified(_ sequences: [UInt64]) {
         lock.withLock {
-            let currentSequences = Set(invocations)
-            verifiedSequences.formUnion(sequences.filter(currentSequences.contains))
+            verifiedSequences.formUnion(sequences.filter(recordedSequences.contains))
         }
     }
 }

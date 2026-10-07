@@ -39,6 +39,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     }
 
     private var invocations: [Invocation] = []
+    private var invocationIndices: [UInt64: Int] = [:]
     private var verifiedSequences: Set<UInt64> = []
     private var stubs: [Stub] = []
     private var actions: [Action] = []
@@ -185,7 +186,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     public func record(_ arguments: Arguments) {
         let sequence = nextMockInvocationSequence()
         let waiters = lock.withLock { () -> [CheckedContinuation<Void, any Error>] in
-            invocations.append(.init(sequence: sequence, arguments: arguments))
+            appendInvocation(sequence: sequence, arguments: arguments)
             invocationGeneration &+= 1
             return drainInvocationWaiters()
         }
@@ -237,7 +238,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         sequence: UInt64,
         matching: @escaping (Arguments) -> Bool
     ) -> Bool {
-        let invocation = lock.withLock { invocations.first { $0.sequence == sequence } }
+        let invocation = lock.withLock { invocationIndices[sequence].map { invocations[$0] } }
         return invocation.map { matching($0.arguments) } ?? false
     }
 
@@ -262,6 +263,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
             let retired = (invocations, stubs, actions, actionStubs)
             if scopes.contains(.invocations) {
                 invocations.removeAll()
+                invocationIndices.removeAll()
                 verifiedSequences.removeAll()
                 invocationGeneration &+= 1
             }
@@ -289,7 +291,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     private func selectOutcome(for arguments: Arguments, ephemeral: borrowing Ephemeral) -> StubOutcome<Arguments, Ephemeral, Output>? {
         let sequence = nextMockInvocationSequence()
         let (snapshot, waiters) = lock.withLock { () -> (([Action], [Stub], [ActionStub]), [CheckedContinuation<Void, any Error>]) in
-            invocations.append(.init(sequence: sequence, arguments: arguments))
+            appendInvocation(sequence: sequence, arguments: arguments)
             invocationGeneration &+= 1
             return ((actions, stubs, actionStubs), drainInvocationWaiters())
         }
@@ -369,9 +371,14 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
 
     private func markVerified(_ sequences: [UInt64]) {
         lock.withLock {
-            let currentSequences = Set(invocations.map(\.sequence))
-            verifiedSequences.formUnion(sequences.filter(currentSequences.contains))
+            verifiedSequences.formUnion(sequences.filter { invocationIndices[$0] != nil })
         }
+    }
+
+    /// Must be called while holding `lock`.
+    private func appendInvocation(sequence: UInt64, arguments: Arguments) {
+        invocationIndices[sequence] = invocations.count
+        invocations.append(.init(sequence: sequence, arguments: arguments))
     }
 
     private func callHistorySnapshot() -> (generation: UInt64, arguments: [Arguments]) {
