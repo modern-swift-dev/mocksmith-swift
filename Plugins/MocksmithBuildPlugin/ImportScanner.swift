@@ -39,6 +39,17 @@ private struct ImportCache: Codable, Equatable {
 }
 
 struct ImportScanner {
+    /// Do not backtrack across whole runs of masked, otherwise blank comment lines.
+    private static let importExpression: NSRegularExpression = {
+        do {
+            return try NSRegularExpression(
+                pattern: #"(?m)^[^\S\r\n]*(?:(?:@[A-Za-z_][A-Za-z0-9_]*)(?:\([^)\r\n]*\))?\s+)*(?:(?:public|package|internal|fileprivate|private|open)\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?([A-Za-z_][A-Za-z0-9_]*)"#
+            )
+        } catch {
+            preconditionFailure("invalid import pattern: \(error)")
+        }
+    }()
+
     private let cacheURL: URL
     private let executable: ImportCache.ExecutableIdentity?
     private let previous: ImportCache?
@@ -57,10 +68,7 @@ struct ImportScanner {
     }
 
     mutating func importedModuleNames(in paths: [URL]) throws -> Set<String> {
-        // Do not backtrack across whole runs of masked, otherwise blank comment lines.
-        let expression = try NSRegularExpression(
-            pattern: #"(?m)^[^\S\r\n]*(?:(?:@[A-Za-z_][A-Za-z0-9_]*)(?:\([^)\r\n]*\))?\s+)*(?:(?:public|package|internal|fileprivate|private|open)\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?([A-Za-z_][A-Za-z0-9_]*)"#
-        )
+        let expression = Self.importExpression
         var modules = Set<String>()
         for path in paths {
             let source = try String(contentsOf: path, encoding: .utf8)
