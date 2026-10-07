@@ -391,35 +391,4 @@ package struct MockGenerator {
             default: "[" + channels.joined(separator: ", ") + "].flatMap { $0 }"
         }
     }
-
-    func supportingMembers() -> [DeclSyntax] {
-        let declaration = DeclSyntax(stringLiteral: render())
-        let members: MemberBlockItemListSyntax
-        if let classDecl = declaration.as(ClassDeclSyntax.self) {
-            members = classDecl.memberBlock.members
-        } else if let actorDecl = declaration.as(ActorDeclSyntax.self) {
-            members = actorDecl.memberBlock.members
-        } else {
-            return []
-        }
-        return members.compactMap { item in
-            if let variable = item.decl.as(VariableDeclSyntax.self),
-               let identifier = variable.bindings.first?.pattern.as(IdentifierPatternSyntax.self)?.identifier.text,
-               identifier.hasPrefix("_mock_") || identifier == "_genericMockRegistry"
-               || identifier == "_mocksmithOrderedInvocations"
-               || identifier == "_mocksmithUnverifiedInvocations" {
-                return item.decl
-            }
-            if let structure = item.decl.as(StructDeclSyntax.self),
-               ["Given", "Verify", "Calls", "OrderExpect", "Perform", "StaticGiven", "StaticVerify", "StaticCalls", "StaticOrderExpect", "StaticPerform"].contains(structure.name.text) {
-                return item.decl
-            }
-            if let function = item.decl.as(FunctionDeclSyntax.self),
-               ["given", "_mocksmithCalls", "perform", "orderExpectations", "verification", "resetMock", "_mocksmithStaticCalls"].contains(function.name.text) {
-                return item.decl
-            }
-            return nil
-        }
-    }
-
 }
