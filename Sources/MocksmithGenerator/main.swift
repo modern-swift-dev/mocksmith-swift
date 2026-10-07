@@ -301,13 +301,22 @@ private enum GeneratorError: Error {
 }
 
 private final class Scanner {
+    private struct SourceKey: Hashable {
+        let module: String
+        let path: String
+    }
+
     private let targetModule: String
-    private let units: [SourceUnit]
+    private var units: [SourceUnit] = []
     private let availableSourceModules: Set<String>
-    private let usesDependencySources: Bool
+    /// Whether any root mock inherits requirements, which is the only case that
+    /// needs sources beyond the target module's own `@Mockable` candidates.
+    let usesDependencySources: Bool
     private var protocols: [DeclarationID: [ProtocolRecord]] = [:]
     private var aliases: [DeclarationID: [AliasRecord]] = [:]
 
+    /// Parses only the target module's candidates. Call `loadRemainingSources`
+    /// before rendering when `usesDependencySources` is true.
     init(targetModule: String, snapshot: SourceSnapshot) throws {
         self.targetModule = targetModule
         availableSourceModules = Set(snapshot.modules)
@@ -316,12 +325,19 @@ private final class Scanner {
         let targetCandidates = Self.parse(targetInputs, onlyMockableCandidates: true)
         try validateBuildPluginDeclarations(targetCandidates)
         usesDependencySources = targetCandidates.contains(where: requiresDependencySources)
-        let parsed = usesDependencySources
-            ? Self.parse(snapshot.sources)
-            : targetCandidates
-        units = parsed
+        register(targetCandidates)
+    }
 
-        for (unitIndex, unit) in units.enumerated() {
+    /// Parses every protocol or typealias source not already loaded as a candidate.
+    func loadRemainingSources(from snapshot: SourceSnapshot) {
+        let loaded = Set(units.map { SourceKey(module: $0.module, path: $0.path) })
+        register(Self.parse(snapshot.sources.filter { !loaded.contains(SourceKey(module: $0.module, path: $0.path)) }))
+    }
+
+    private func register(_ parsed: [SourceUnit]) {
+        for unit in parsed {
+            let unitIndex = units.count
+            units.append(unit)
             for item in unit.tree.statements {
                 if let declaration = item.item.as(ProtocolDeclSyntax.self) {
                     let record = ProtocolRecord(
@@ -965,21 +981,34 @@ do {
     let cached = (try? Data(contentsOf: cacheURL)).flatMap { try? JSONDecoder().decode(GenerationCache.self, from: $0) }
     let identity = GeneratorIdentity.current()
     let targetSnapshot = try SourceSnapshot(targetOf: arguments)
-    let directCacheHit = identity != nil && cached?.generator == identity
-        && cached?.input.targetModule == arguments.targetModule
-        && cached?.usesDependencySources == false && cached?.snapshot == targetSnapshot
-    let snapshot = try directCacheHit ? targetSnapshot : targetSnapshot.includingDependencies(from: arguments)
+    func cacheMatches(_ snapshot: SourceSnapshot) -> Bool {
+        identity != nil && cached?.generator == identity
+            && cached?.input.targetModule == arguments.targetModule
+            && cached?.usesDependencySources != nil && cached?.snapshot == snapshot
+    }
     let generated: GenerationCache
     let cacheHit: Bool
-    if let identity, let cached, cached.generator == identity,
-       cached.input.targetModule == arguments.targetModule,
-       cached.usesDependencySources != nil, cached.snapshot == snapshot {
+    if let cached, cached.usesDependencySources == false, cacheMatches(targetSnapshot) {
         generated = cached
         cacheHit = true
     } else {
-        let scanner = try Scanner(targetModule: arguments.targetModule, snapshot: snapshot)
-        generated = try scanner.render(cached: cached, identity: identity, snapshot: snapshot)
-        cacheHit = false
+        // Parse the target's candidates first: direct mocks never need another
+        // module's sources, so those files are read only when inheritance demands.
+        let scanner = try Scanner(targetModule: arguments.targetModule, snapshot: targetSnapshot)
+        if scanner.usesDependencySources {
+            let snapshot = try targetSnapshot.includingDependencies(from: arguments)
+            if let cached, cacheMatches(snapshot) {
+                generated = cached
+                cacheHit = true
+            } else {
+                scanner.loadRemainingSources(from: snapshot)
+                generated = try scanner.render(cached: cached, identity: identity, snapshot: snapshot)
+                cacheHit = false
+            }
+        } else {
+            generated = try scanner.render(cached: cached, identity: identity, snapshot: targetSnapshot)
+            cacheHit = false
+        }
     }
     try write(Data(generated.source.utf8), to: arguments.output)
     if !cacheHit {
