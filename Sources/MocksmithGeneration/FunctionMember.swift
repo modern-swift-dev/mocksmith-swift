@@ -125,16 +125,11 @@ struct FunctionMember {
         availability = availabilityAttributes(declaration.attributes)
         usesRegistry = isGeneric || !availability.isEmpty
 
-        let effects = signature.effectSpecifiers
-        let throwsClause = effects?.throwsClause
-        isAsync = effects?.asyncSpecifier != nil
-        isThrowing = throwsClause != nil
-        isRethrows = throwsClause?.throwsSpecifier.tokenKind == .keyword(.rethrows)
-        if let errorType = throwsClause?.type?.trimmedDescription {
-            typedError = ["Error", "any Error", "any Swift.Error"].contains(errorType) ? nil : errorType
-        } else {
-            typedError = nil
-        }
+        let effects = DeclaredEffects(signature.effectSpecifiers)
+        isAsync = effects.isAsync
+        isThrowing = effects.isThrowing
+        isRethrows = effects.isRethrows
+        typedError = effects.typedError
 
         let genericParameters = declaration.genericParameterClause?.parameters
         let explicitGenerics = genericParameters?.map(\.trimmedDescription) ?? []

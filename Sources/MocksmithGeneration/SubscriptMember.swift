@@ -5,6 +5,10 @@ import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
 
 /// Models generated channels, accessors, and factories for a subscript requirement.
+/// Models generated channels, accessors, and factories for a subscript requirement.
+///
+/// Every value derived from the declaration is computed once in `init`; the
+/// factories below read them many times while rendering.
 struct SubscriptMember {
     enum Kind { case get, set }
     let declaration: SubscriptDeclSyntax
@@ -22,30 +26,128 @@ struct SubscriptMember {
     let witnessAttributes: String
     let isOptionalResult: Bool
     let isVoidResult: Bool
+    let isStatic: Bool
+    let isTransient: Bool
+    let opaqueParameters: [(name: String, constraint: String)]
+    let isGeneric: Bool
+    let usesRegistry: Bool
+    let genericTypes: String
+    let packGenericNames: [String]
+    let genericClause: String
+    let whereClause: String
+    let signatureIdentifierSource: String
+    let isAsync: Bool
+    let isThrowing: Bool
+    let typedError: String?
+    let channelName: String
+    let displayName: String
+    let argumentsFieldCount: Int
+    let argumentsType: String
+    let outputType: String
+    let channelType: String
+    let matcherDeclarations: String
 
-    var isStatic: Bool {
-        declaration.modifiers.contains { ["static", "class"].contains($0.name.text) }
-    }
+    init(
+        declaration: SubscriptDeclSyntax,
+        kind: Kind,
+        index: Int,
+        access: String,
+        replacements: [String: String],
+        mockType: String,
+        factoryIsolation: String
+    ) {
+        self.declaration = declaration
+        self.kind = kind
+        self.index = index
+        self.access = access
+        self.replacements = replacements
+        self.mockType = mockType
+        self.factoryIsolation = factoryIsolation
 
-    var isGeneric: Bool {
-        declaration.genericParameterClause != nil || !opaqueParameters.isEmpty
-    }
+        let declaredParameters = Array(declaration.parameterClause.parameters)
+        var opaqueNamesByPosition: [Int: String] = [:]
+        opaqueParameters = declaredParameters.enumerated().compactMap { position, parameter in
+            let opaque = opaqueParameterType(parameter.type.trimmedDescription, position: position)
+            opaqueNamesByPosition[position] = opaque?.name
+            return opaque
+        }
+        parameters = declaredParameters.enumerated().map { position, parameter in
+            let external = parameter.firstName.text
+            let local = parameter.secondName?.text ?? (external == "_" ? "index\(position)" : external)
+            var type = opaqueNamesByPosition[position]
+                ?? rewriteType(parameter.type, replacements: replacements, mockType: mockType)
+            if parameter.ellipsis != nil {
+                type = "[\(type)]"
+            }
+            return ParameterInfo(external: external, local: local, type: type, matcher: "matching\(position)", position: position)
+        }
 
-    var isTransient: Bool {
-        isTransientRequirement(declaration)
-    }
+        isReadWrite = hasSetter(declaration.accessorBlock)
+        valueType = rewriteType(declaration.returnClause.type, replacements: replacements, mockType: mockType)
+        isOptionalResult = isOptionalType(declaration.returnClause.type)
+        isVoidResult = isVoidType(declaration.returnClause.type)
+        let getter: AccessorDeclSyntax? = {
+            guard let block = declaration.accessorBlock, case let .accessors(list) = block.accessors else {
+                return nil
+            }
+            return list.first { $0.accessorSpecifier.text == "get" }
+        }()
+        getterHeader = getter.map(accessorHeader) ?? "get"
+        let effects = DeclaredEffects(getter?.effectSpecifiers)
+        isAsync = effects.isAsync
+        isThrowing = effects.isThrowing
+        typedError = effects.typedError
+        availability = availabilityAttributes(declaration.attributes)
+        witnessAttributes = witnessAttributePrefix(declaration.attributes, indentation: "    ")
 
-    var usesRegistry: Bool {
-        isGeneric || !availability.isEmpty
-    }
+        isStatic = declaration.modifiers.contains { ["static", "class"].contains($0.name.text) }
+        isTransient = isTransientRequirement(declaration)
+        isGeneric = declaration.genericParameterClause != nil || !opaqueParameters.isEmpty
+        usesRegistry = isGeneric || !availability.isEmpty
 
-    var genericTypes: String {
-        ((declaration.genericParameterClause?.parameters.filter { $0.specifier == nil }.map { "\($0.name.text).self" } ?? [])
+        let genericParameters = declaration.genericParameterClause?.parameters
+        genericTypes = ((genericParameters?.filter { $0.specifier == nil }.map { "\($0.name.text).self" } ?? [])
             + opaqueParameters.map { "\($0.name).self" }).joined(separator: ", ")
+        packGenericNames = genericParameters?.compactMap { $0.specifier == nil ? nil : $0.name.text } ?? []
+        let allGenerics = (genericParameters?.map(\.trimmedDescription) ?? []) + opaqueParameters.map { "\($0.name): \($0.constraint)" }
+        genericClause = allGenerics.isEmpty ? "" : "<\(allGenerics.joined(separator: ", "))>"
+        whereClause = declaration.genericWhereClause.map { " " + rewriteType($0, replacements: replacements, mockType: mockType) } ?? ""
+
+        let modifiers = declaration.modifiers.map(\.trimmedDescription).filter { !["public", "package", "internal", "fileprivate", "private"].contains($0) }.joined(separator: " ")
+        signatureIdentifierSource = [
+            modifiers,
+            declaration.genericParameterClause?.trimmedDescription ?? "",
+            declaration.parameterClause.trimmedDescription,
+            declaration.returnClause.trimmedDescription,
+            declaration.genericWhereClause?.trimmedDescription ?? "",
+            getterHeader
+        ].joined(separator: "|")
+
+        let kindName = kind == .get ? "get" : "set"
+        channelName = "_mock_subscript_\(kindName)_\(stableIdentifier(signatureIdentifierSource))"
+        displayName = "subscript.\(kindName)"
+        argumentsFieldCount = parameters.count + (kind == .set ? 1 : 0)
+        outputType = kind == .get ? valueType : "Void"
+        matcherDeclarations = (parameters.map(\.declaration) + (kind == .set ? ["value: Parameter<\(valueType)>"] : [])).joined(separator: ", ")
+
+        if isTransient, argumentsFieldCount > 1 {
+            argumentsType = "_MockArguments_\(stableIdentifier(displayName + signatureIdentifierSource))"
+        } else if kind == .get, parameters.count == 1, parameters[0].isPack {
+            argumentsType = "(\(parameters[0].type))"
+        } else {
+            let fields = parameters.map { "\($0.local): \($0.type)" } + (kind == .set ? ["newValue: \(valueType)"] : [])
+            argumentsType = switch fields.count {
+                case 0: "Void"
+                case 1: parameters[0].type
+                default: "(" + fields.joined(separator: ", ") + ")"
+            }
+        }
+        channelType = "\(isTransient ? "TransientMockMember" : "MockMember")<\(argumentsType), Void, \(outputType)>"
     }
 
-    var packGenericNames: [String] {
-        declaration.genericParameterClause?.parameters.compactMap { $0.specifier == nil ? nil : $0.name.text } ?? []
+    /// The setter counterpart of a getter member, sharing its declaration.
+    private var setterMember: Self {
+        Self(declaration: declaration, kind: .set, index: index, access: access, replacements: replacements, mockType: mockType, factoryIsolation: factoryIsolation)
     }
 
     var registrySetup: String {
@@ -71,107 +173,8 @@ struct SubscriptMember {
         guard isSupported(declaration) else {
             return []
         }
-        let parameters = declaration.parameterClause.parameters.enumerated().map { position, parameter in
-            let external = parameter.firstName.text
-            let local = parameter.secondName?.text ?? (external == "_" ? "index\(position)" : external)
-            var type = opaqueParameter(in: declaration, at: position)?.name
-                ?? rewriteType(parameter.type, replacements: replacements, mockType: mockType)
-            if parameter.ellipsis != nil {
-                type = "[\(type)]"
-            }
-            return ParameterInfo(external: external, local: local, type: type, matcher: "matching\(position)", position: position)
-        }
-        let settable = hasSetter(declaration.accessorBlock)
-        let valueType = rewriteType(declaration.returnClause.type, replacements: replacements, mockType: mockType)
-        let isOptionalResult = isOptionalType(declaration.returnClause.type)
-        let isVoidResult = isVoidType(declaration.returnClause.type)
-        let accessors: [AccessorDeclSyntax] = {
-            guard let block = declaration.accessorBlock, case let .accessors(list) = block.accessors else {
-                return []
-            }
-            return Array(list)
-        }()
-        let getterHeader = accessors.first(where: { $0.accessorSpecifier.text == "get" }).map(accessorHeader) ?? "get"
-        let availability = availabilityAttributes(declaration.attributes)
-        let witnessAttributes = witnessAttributePrefix(declaration.attributes, indentation: "    ")
-        var result = [Self(
-            declaration: declaration,
-            kind: .get,
-            index: index,
-            access: access,
-            parameters: parameters,
-            valueType: valueType,
-            isReadWrite: settable,
-            factoryIsolation: factoryIsolation,
-            replacements: replacements,
-            mockType: mockType,
-            getterHeader: getterHeader,
-            availability: availability,
-            witnessAttributes: witnessAttributes,
-            isOptionalResult: isOptionalResult,
-            isVoidResult: isVoidResult
-        )]
-        if settable {
-            result.append(Self(
-                declaration: declaration,
-                kind: .set,
-                index: index,
-                access: access,
-                parameters: parameters,
-                valueType: valueType,
-                isReadWrite: true,
-                factoryIsolation: factoryIsolation,
-                replacements: replacements,
-                mockType: mockType,
-                getterHeader: getterHeader,
-                availability: availability,
-                witnessAttributes: witnessAttributes,
-                isOptionalResult: isOptionalResult,
-                isVoidResult: isVoidResult
-            ))
-        }
-        return result
-    }
-
-    var signatureIdentifierSource: String {
-        let modifiers = declaration.modifiers.map(\.trimmedDescription).filter { !["public", "package", "internal", "fileprivate", "private"].contains($0) }.joined(separator: " ")
-        return [
-            modifiers,
-            declaration.genericParameterClause?.trimmedDescription ?? "",
-            declaration.parameterClause.trimmedDescription,
-            declaration.returnClause.trimmedDescription,
-            declaration.genericWhereClause?.trimmedDescription ?? "",
-            getterHeader
-        ].joined(separator: "|")
-    }
-
-    var channelName: String {
-        "_mock_subscript_\(kind == .get ? "get" : "set")_\(stableIdentifier(signatureIdentifierSource))"
-    }
-
-    var displayName: String {
-        "subscript.\(kind == .get ? "get" : "set")"
-    }
-
-    var argumentsType: String {
-        if isTransient, argumentsFieldCount > 1 {
-            return "_MockArguments_\(stableIdentifier(displayName + signatureIdentifierSource))"
-        }
-        if kind == .get, parameters.count == 1, parameters[0].isPack {
-            return "(\(parameters[0].type))"
-        }
-        let fields = parameters.map { "\($0.local): \($0.type)" } + (kind == .set ? ["newValue: \(valueType)"] : [])
-        if fields.isEmpty {
-            return "Void"
-        }
-        if fields.count == 1 {
-            return parameters[0].type
-        }
-        return "(" + fields.joined(separator: ", ") + ")"
-    }
-
-    var outputType: String {
-        kind == .get ? valueType : "Void"
+        let getter = Self(declaration: declaration, kind: .get, index: index, access: access, replacements: replacements, mockType: mockType, factoryIsolation: factoryIsolation)
+        return getter.isReadWrite ? [getter, getter.setterMember] : [getter]
     }
 
     var defaultFallback: String? {
@@ -186,26 +189,6 @@ struct SubscriptMember {
             return "{ switch \(policy) { case .voidAndOptional: nil; case .strict, .void: preconditionFailure(\"Unstubbed nonthrowing member subscript.get\") } }"
         }
         return nil
-    }
-
-    var getterEffects: String {
-        getterHeader.replacingOccurrences(of: "get", with: "", options: [.anchored]).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var isAsync: Bool {
-        getterEffects.range(of: #"\basync\b"#, options: .regularExpression) != nil
-    }
-
-    var isThrowing: Bool {
-        getterEffects.range(of: #"\bthrows\b"#, options: .regularExpression) != nil
-    }
-
-    var typedError: String? {
-        parsedTypedError(getterEffects)
-    }
-
-    var channelType: String {
-        "\(isTransient ? "TransientMockMember" : "MockMember")<\(argumentsType), Void, \(outputType)>"
     }
 
     var channelConstructor: String {
@@ -248,11 +231,6 @@ struct SubscriptMember {
         return "    \(access)struct \(argumentsType): ~Copyable {\n" + fields.map { "        let \($0.0): \($0.1)" }.joined(separator: "\n") + "\n    }"
     }
 
-    var matcherDeclarations: String {
-        let base = parameters.map(\.declaration)
-        return (base + (kind == .set ? ["value: Parameter<\(valueType)>"] : [])).joined(separator: ", ")
-    }
-
     var specificity: String {
         if kind == .get, parameters.count == 1, parameters[0].isPack {
             return "specificity"
@@ -273,10 +251,6 @@ struct SubscriptMember {
             parts.append("value.matches(arguments.newValue)")
         }
         return parts.isEmpty ? "{ _ in true }" : "{ arguments in " + parts.joined(separator: " && ") + " }"
-    }
-
-    var argumentsFieldCount: Int {
-        parameters.count + (kind == .set ? 1 : 0)
     }
 
     var invocationArguments: String {
@@ -341,23 +315,7 @@ struct SubscriptMember {
             "\(witnessRegistryResolution)\(defaultPolicySnapshot)do { return \(call) }\n            catch { preconditionFailure(\"Unstubbed nonthrowing member subscript.get: \\(error)\") }"
         }
         let getter = "\(getterHeader) {\n            \(getterBody)\n        }"
-        let setterMember = Self(
-            declaration: declaration,
-            kind: .set,
-            index: index,
-            access: access,
-            parameters: parameters,
-            valueType: valueType,
-            isReadWrite: true,
-            factoryIsolation: factoryIsolation,
-            replacements: replacements,
-            mockType: mockType,
-            getterHeader: getterHeader,
-            availability: availability,
-            witnessAttributes: witnessAttributes,
-            isOptionalResult: isOptionalResult,
-            isVoidResult: isVoidResult
-        )
+        let setterMember = self.setterMember
         let setterArgs = setterMember.invocationArguments
         let setterFallback = !isStatic ?
             ", unstubbed: { switch self._mocksmithDefaultPolicy { case .void, .voidAndOptional: (); case .strict: preconditionFailure(\"Unstubbed nonthrowing member subscript.set\") } }" : ""
@@ -518,23 +476,6 @@ struct SubscriptMember {
         )
     }
 
-    var genericClause: String {
-        let explicit = declaration.genericParameterClause?.parameters.map(\.trimmedDescription) ?? []
-        let opaque = opaqueParameters.map { "\($0.name): \($0.constraint)" }
-        let all = explicit + opaque
-        return all.isEmpty ? "" : "<\(all.joined(separator: ", "))>"
-    }
-
-    var opaqueParameters: [(name: String, constraint: String)] {
-        parameters.indices.compactMap { position in
-            opaqueParameter(in: declaration, at: position)
-        }
-    }
-
-    var whereClause: String {
-        declaration.genericWhereClause.map { " " + rewriteType($0, replacements: replacements, mockType: mockType) } ?? ""
-    }
-
     private func factoryArguments(_ arguments: String, inferredFrom: String = "") -> String {
         var usedReturningLabel = false
         let tokens = declaration.genericParameterClause?.parameters.compactMap { parameter -> String? in
@@ -572,12 +513,4 @@ struct SubscriptMember {
         }
         return "var specificity = 0\n            for matcher in repeat each \(parameter.matcher) { specificity += matcher.specificity }\n            "
     }
-}
-
-private func opaqueParameter(in declaration: SubscriptDeclSyntax, at position: Int) -> (name: String, constraint: String)? {
-    let parameter = declaration.parameterClause.parameters[declaration.parameterClause.parameters.index(
-        declaration.parameterClause.parameters.startIndex,
-        offsetBy: position
-    )]
-    return opaqueParameterType(parameter.type.trimmedDescription, position: position)
 }

@@ -87,6 +87,37 @@ func accessorHeader(_ accessor: AccessorDeclSyntax) -> String {
     return copy.trimmedDescription
 }
 
+/// Effects declared on a requirement, read structurally rather than from the
+/// trimmed text of the effect specifiers.
+struct DeclaredEffects {
+    let isAsync: Bool
+    let isThrowing: Bool
+    let isRethrows: Bool
+    let typedError: String?
+
+    init(_ effects: FunctionEffectSpecifiersSyntax?) {
+        isAsync = effects?.asyncSpecifier != nil
+        isThrowing = effects?.throwsClause != nil
+        isRethrows = effects?.throwsClause?.throwsSpecifier.tokenKind == .keyword(.rethrows)
+        typedError = typedErrorName(effects?.throwsClause?.type)
+    }
+
+    init(_ effects: AccessorEffectSpecifiersSyntax?) {
+        isAsync = effects?.asyncSpecifier != nil
+        isThrowing = effects?.throwsClause != nil
+        isRethrows = false
+        typedError = typedErrorName(effects?.throwsClause?.type)
+    }
+}
+
+/// The explicit error type of a `throws(E)` clause, or nil for untyped throws.
+func typedErrorName(_ type: TypeSyntax?) -> String? {
+    guard let type = type?.trimmedDescription else {
+        return nil
+    }
+    return ["Error", "any Error", "any Swift.Error"].contains(type) ? nil : type
+}
+
 func parsedTypedError(_ effects: String) -> String? {
     guard let start = effects.range(of: "throws("), let end = effects[start.upperBound...].firstIndex(of: ")") else {
         return nil
