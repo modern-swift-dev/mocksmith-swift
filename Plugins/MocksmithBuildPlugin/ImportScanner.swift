@@ -10,7 +10,8 @@ private enum SourceRegion {
 /// Keep this cache private to plugin planning; it is not a generated target resource.
 private struct ImportCache: Codable, Equatable {
     struct Entry: Codable, Equatable {
-        let source: String
+        /// SHA-256 of the file's text; compared instead of the text itself.
+        let digest: String
         let modules: Set<String>
     }
 
@@ -48,7 +49,7 @@ struct ImportScanner {
         executable = ImportCache.ExecutableIdentity.current()
         if let data = try? Data(contentsOf: cacheURL),
            let cache = try? JSONDecoder().decode(ImportCache.self, from: data),
-           cache.version == 1, cache.executable == executable {
+           cache.version == 2, cache.executable == executable {
             previous = cache
         } else {
             previous = nil
@@ -63,9 +64,10 @@ struct ImportScanner {
         var modules = Set<String>()
         for path in paths {
             let source = try String(contentsOf: path, encoding: .utf8)
+            let digest = SHA256.hexDigest(of: source)
             let entry: ImportCache.Entry
             // Compare contents, not timestamps: edits with preserved metadata must invalidate.
-            if let cached = previous?.files[path.path], cached.source == source {
+            if let cached = previous?.files[path.path], cached.digest == digest {
                 entry = cached
             } else {
                 let sourceCode = sourceCodeOnly(source)
@@ -76,7 +78,7 @@ struct ImportScanner {
                     }
                     return String(sourceCode[moduleRange])
                 }
-                entry = ImportCache.Entry(source: source, modules: Set(imports))
+                entry = ImportCache.Entry(digest: digest, modules: Set(imports))
             }
             files[path.path] = entry
             modules.formUnion(entry.modules)
@@ -88,7 +90,7 @@ struct ImportScanner {
         guard let executable else {
             return
         }
-        let cache = ImportCache(version: 1, executable: executable, files: files)
+        let cache = ImportCache(version: 2, executable: executable, files: files)
         guard cache != previous else {
             return
         }
