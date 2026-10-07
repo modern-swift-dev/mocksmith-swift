@@ -52,6 +52,34 @@ package func hasSetter(_ block: AccessorBlockSyntax?) -> Bool {
     return accessors.contains { $0.accessorSpecifier.tokenKind == .keyword(.set) }
 }
 
+/// Finds a `~Copyable` suppression anywhere in a declaration without
+/// serializing it, so the check is structural and cheap.
+func containsNoncopyableSuppression(_ node: some SyntaxProtocol) -> Bool {
+    let finder = NoncopyableSuppressionFinder(viewMode: .sourceAccurate)
+    finder.walk(node)
+    return finder.found
+}
+
+/// Returns whether a requirement is transient: marked `@MockNoncopyable`
+/// or mentioning `~Copyable` in its signature.
+func isTransientRequirement(_ declaration: some WithAttributesSyntax) -> Bool {
+    hasAttribute(named: "MockNoncopyable", in: declaration.attributes)
+        || containsNoncopyableSuppression(declaration)
+}
+
+private final class NoncopyableSuppressionFinder: SyntaxVisitor {
+    var found = false
+
+    override func visit(_ node: SuppressedTypeSyntax) -> SyntaxVisitorContinueKind {
+        let name = node.type.as(IdentifierTypeSyntax.self)?.name.text
+            ?? node.type.as(MemberTypeSyntax.self)?.name.text
+        if name == "Copyable" {
+            found = true
+        }
+        return .skipChildren
+    }
+}
+
 func accessorHeader(_ accessor: AccessorDeclSyntax) -> String {
     var copy = accessor
     copy.body = nil

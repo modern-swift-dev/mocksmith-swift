@@ -20,7 +20,7 @@ struct InitializerMember {
     }
 
     var isTransient: Bool {
-        hasAttribute(named: "MockNoncopyable", in: declaration.attributes) || declaration.trimmedDescription.contains("~Copyable")
+        isTransientRequirement(declaration)
     }
 
     var channelType: String {

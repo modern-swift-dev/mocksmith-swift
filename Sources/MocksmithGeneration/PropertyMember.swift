@@ -52,7 +52,7 @@ struct PropertyMember {
         let getterHeader = accessors.first(where: { $0.accessorSpecifier.text == "get" }).map(accessorHeader) ?? "get"
         let availability = availabilityAttributes(declaration.attributes)
         let witnessAttributes = witnessAttributePrefix(declaration.attributes, indentation: "    ")
-        let isTransient = hasAttribute(named: "MockNoncopyable", in: declaration.attributes) || declaration.trimmedDescription.contains("~Copyable")
+        let isTransient = isTransientRequirement(declaration)
         let isOptionalResult = isOptionalType(annotation.type)
         let isVoidResult = isVoidType(annotation.type)
         var result = [Self(

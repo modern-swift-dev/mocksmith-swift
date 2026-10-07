@@ -154,7 +154,7 @@ struct FunctionMember {
     }
 
     var isTransient: Bool {
-        hasAttribute(named: "MockNoncopyable", in: declaration.attributes) || declaration.trimmedDescription.contains("~Copyable")
+        isTransientRequirement(declaration)
     }
 
     var genericClause: String {

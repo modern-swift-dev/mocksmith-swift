@@ -101,20 +101,20 @@ package struct MockGenerator {
 
     package func validate(in context: some MacroExpansionContext) -> Bool {
         var valid = true
-        if protocolDecl.genericWhereClause?.trimmedDescription.contains("~Copyable") == true {
+        if let whereClause = protocolDecl.genericWhereClause, containsNoncopyableSuppression(whereClause) {
             diagnose("noncopyable associated-type constraints are not supported yet", at: protocolDecl, in: context)
             valid = false
         }
         for item in protocolDecl.memberBlock.members {
             if let associatedType = item.decl.as(AssociatedTypeDeclSyntax.self) {
-                if associatedType.trimmedDescription.contains("~Copyable") {
+                if containsNoncopyableSuppression(associatedType) {
                     diagnose("noncopyable associated types are not supported yet", at: associatedType, in: context)
                     valid = false
                 }
                 continue
             }
             if let function = item.decl.as(FunctionDeclSyntax.self) {
-                let transient = hasAttribute(named: "MockNoncopyable", in: function.attributes) || function.trimmedDescription.contains("~Copyable")
+                let transient = isTransientRequirement(function)
                 if transient, function.signature.parameterClause.parameters.contains(where: {
                     isNonescapingClosure($0.type)
                 }) {
@@ -162,7 +162,7 @@ package struct MockGenerator {
             if let subscriptDecl = item.decl.as(SubscriptDeclSyntax.self) {
                 let settable = hasSetter(subscriptDecl.accessorBlock)
                 let hasValuePack = subscriptDecl.genericParameterClause?.parameters.contains(where: { $0.specifier != nil }) == true
-                let transient = hasAttribute(named: "MockNoncopyable", in: subscriptDecl.attributes) || subscriptDecl.trimmedDescription.contains("~Copyable")
+                let transient = isTransientRequirement(subscriptDecl)
                 if transient, subscriptDecl.parameterClause.parameters.contains(where: {
                     isNonescapingClosure($0.type)
                 }) {
