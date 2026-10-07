@@ -22,6 +22,9 @@ struct PropertyMember {
     let isTransient: Bool
     let isOptionalResult: Bool
     let isVoidResult: Bool
+    let isAsync: Bool
+    let isThrowing: Bool
+    let typedError: String?
     var usesRegistry: Bool {
         !availability.isEmpty
     }
@@ -49,7 +52,9 @@ struct PropertyMember {
             }
             return Array(list)
         }()
-        let getterHeader = accessors.first(where: { $0.accessorSpecifier.text == "get" }).map(accessorHeader) ?? "get"
+        let getter = accessors.first { $0.accessorSpecifier.text == "get" }
+        let getterHeader = getter.map(accessorHeader) ?? "get"
+        let effects = DeclaredEffects(getter?.effectSpecifiers)
         let availability = availabilityAttributes(declaration.attributes)
         let witnessAttributes = witnessAttributePrefix(declaration.attributes, indentation: "    ")
         let isTransient = isTransientRequirement(declaration)
@@ -70,7 +75,10 @@ struct PropertyMember {
             witnessAttributes: witnessAttributes,
             isTransient: isTransient,
             isOptionalResult: isOptionalResult,
-            isVoidResult: isVoidResult
+            isVoidResult: isVoidResult,
+            isAsync: effects.isAsync,
+            isThrowing: effects.isThrowing,
+            typedError: effects.typedError
         )]
         if settable {
             result.append(Self(
@@ -88,7 +96,10 @@ struct PropertyMember {
                 witnessAttributes: witnessAttributes,
                 isTransient: isTransient,
                 isOptionalResult: isOptionalResult,
-                isVoidResult: isVoidResult
+                isVoidResult: isVoidResult,
+                isAsync: effects.isAsync,
+                isThrowing: effects.isThrowing,
+                typedError: effects.typedError
             ))
         }
         return result
@@ -126,22 +137,6 @@ struct PropertyMember {
             return "{ switch \(policy) { case .voidAndOptional: nil; case .strict, .void: preconditionFailure(\"Unstubbed nonthrowing member \(displayName)\") } }"
         }
         return nil
-    }
-
-    var getterEffects: String {
-        getterHeader.replacingOccurrences(of: "get", with: "", options: [.anchored]).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var isAsync: Bool {
-        getterEffects.range(of: #"\basync\b"#, options: .regularExpression) != nil
-    }
-
-    var isThrowing: Bool {
-        getterEffects.range(of: #"\bthrows\b"#, options: .regularExpression) != nil
-    }
-
-    var typedError: String? {
-        parsedTypedError(getterEffects)
     }
 
     var answerType: String {

@@ -118,14 +118,6 @@ func typedErrorName(_ type: TypeSyntax?) -> String? {
     return ["Error", "any Error", "any Swift.Error"].contains(type) ? nil : type
 }
 
-func parsedTypedError(_ effects: String) -> String? {
-    guard let start = effects.range(of: "throws("), let end = effects[start.upperBound...].firstIndex(of: ")") else {
-        return nil
-    }
-    let type = String(effects[start.upperBound ..< end]).trimmingCharacters(in: .whitespaces)
-    return ["Error", "any Error", "any Swift.Error"].contains(type) ? nil : type
-}
-
 func stableIdentifier(_ text: String) -> String {
     var hash: UInt64 = 14_695_981_039_346_656_037
     for byte in text.utf8 {
