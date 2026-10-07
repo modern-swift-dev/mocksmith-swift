@@ -5,6 +5,11 @@ import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
 
 /// Models generated channels, witnesses, and factories for a function requirement.
+/// Models generated channels, witnesses, and factories for a function requirement.
+///
+/// Every value derived from the declaration is computed once here. The factories
+/// below read these stored properties repeatedly, so recomputing them per access
+/// would re-walk the syntax tree dozens of times for each requirement.
 struct FunctionMember {
     let declaration: FunctionDeclSyntax
     let index: Int
@@ -13,74 +18,138 @@ struct FunctionMember {
     let mockType: String
     let factoryIsolation: String
 
-    var name: String {
-        declaration.name.text
-    }
+    let name: String
+    let channelName: String
+    let displayName: String
+    let parameters: [ParameterInfo]
+    let ephemeralParameters: [(local: String, type: String)]
+    let ephemeralArgumentsType: String
+    let argumentsType: String
+    let outputType: String
+    let isStatic: Bool
+    let opaqueParameters: [(name: String, constraint: String)]
+    let isGeneric: Bool
+    let availability: String
+    let usesRegistry: Bool
+    let isRethrows: Bool
+    let isThrowing: Bool
+    let isAsync: Bool
+    let isTransient: Bool
+    let typedError: String?
+    let genericClause: String
+    let whereClause: String
+    let genericTypes: String
+    let packGenericNames: [String]
+    let channelType: String
+    let matcherDeclarations: String
+    private let returnsVoid: Bool
+    private let returnsOptional: Bool
 
-    var channelName: String {
-        "_mock_\(name.replacingOccurrences(of: "`", with: ""))_\(index)"
-    }
+    init(
+        declaration: FunctionDeclSyntax,
+        index: Int,
+        access: String,
+        replacements: [String: String],
+        mockType: String,
+        factoryIsolation: String
+    ) {
+        self.declaration = declaration
+        self.index = index
+        self.access = access
+        self.replacements = replacements
+        self.mockType = mockType
+        self.factoryIsolation = factoryIsolation
 
-    var displayName: String {
-        declaration.name.text + declaration.signature.parameterClause.parameters.map { "\($0.firstName.text):" }.joined()
-    }
+        let signature = declaration.signature
+        let declaredParameters = Array(signature.parameterClause.parameters)
+        name = declaration.name.text
+        channelName = "_mock_\(name.replacingOccurrences(of: "`", with: ""))_\(index)"
+        displayName = name + declaredParameters.map { "\($0.firstName.text):" }.joined()
 
-    var parameters: [ParameterInfo] {
-        declaration.signature.parameterClause.parameters.enumerated().compactMap { position, parameter in
-            if isNonescapingClosure(parameter.type) {
-                return nil
-            }
+        var opaqueNamesByPosition: [Int: String] = [:]
+        opaqueParameters = declaredParameters.enumerated().compactMap { position, parameter in
+            let opaque = opaqueParameterType(parameter.type.trimmedDescription, position: position)
+            opaqueNamesByPosition[position] = opaque?.name
+            return opaque
+        }
+
+        var parameters: [ParameterInfo] = []
+        var ephemeralParameters: [(local: String, type: String)] = []
+        for (position, parameter) in declaredParameters.enumerated() {
             let external = parameter.firstName.text
             let local = parameter.secondName?.text ?? (external == "_" ? "argument\(position)" : external)
-            var type = opaqueParameter(at: position)?.name
-                ?? strippingEscapingAttribute(from: rewriteType(parameter.type, replacements: replacements, mockType: mockType))
+            let rewritten = rewriteType(parameter.type, replacements: replacements, mockType: mockType)
+            if isNonescapingClosure(parameter.type) {
+                ephemeralParameters.append((local, rewritten))
+                continue
+            }
+            var type = opaqueNamesByPosition[position] ?? strippingEscapingAttribute(from: rewritten)
             if parameter.ellipsis != nil {
                 type = "[\(type)]"
             }
             for prefix in ["inout ", "borrowing ", "consuming ", "sending "] where type.hasPrefix(prefix) {
                 type.removeFirst(prefix.count)
             }
-            return ParameterInfo(external: external, local: local, type: type, matcher: "matching\(position)", position: position)
+            parameters.append(ParameterInfo(external: external, local: local, type: type, matcher: "matching\(position)", position: position))
         }
-    }
+        self.parameters = parameters
+        self.ephemeralParameters = ephemeralParameters
+        matcherDeclarations = parameters.map(\.declaration).joined(separator: ", ")
 
-    var ephemeralParameters: [(local: String, type: String)] {
-        declaration.signature.parameterClause.parameters.enumerated().compactMap { position, parameter -> (String, String)? in
-            guard isNonescapingClosure(parameter.type) else {
-                return nil
-            }
-            let external = parameter.firstName.text
-            let local = parameter.secondName?.text ?? (external == "_" ? "argument\(position)" : external)
-            return (local, rewriteType(parameter.type, replacements: replacements, mockType: mockType))
+        ephemeralArgumentsType = switch ephemeralParameters.count {
+            case 0: "Void"
+            case 1: ephemeralParameters[0].type
+            default: "(" + ephemeralParameters.map { "\($0.local): \($0.type)" }.joined(separator: ", ") + ")"
         }
+
+        isTransient = isTransientRequirement(declaration)
+        if isTransient, parameters.count > 1 {
+            argumentsType = "_MockArguments_\(stableIdentifier(displayName))"
+        } else if parameters.count == 1, parameters[0].isPack {
+            argumentsType = "(\(parameters[0].type))"
+        } else {
+            argumentsType = switch parameters.count {
+                case 0: "Void"
+                case 1: parameters[0].type
+                default: "(" + parameters.map { "\($0.local): \($0.type)" }.joined(separator: ", ") + ")"
+            }
+        }
+
+        let returnType = signature.returnClause?.type
+        outputType = returnType.map { rewriteType($0, replacements: replacements, mockType: mockType) } ?? "Void"
+        returnsVoid = returnType.map { isVoidType($0) } ?? true
+        returnsOptional = returnType.map { isOptionalType($0) } ?? false
+
+        isStatic = declaration.modifiers.contains { ["static", "class"].contains($0.name.text) }
+        isGeneric = declaration.genericParameterClause != nil || !opaqueParameters.isEmpty
+        availability = availabilityAttributes(declaration.attributes)
+        usesRegistry = isGeneric || !availability.isEmpty
+
+        let effects = signature.effectSpecifiers
+        let throwsClause = effects?.throwsClause
+        isAsync = effects?.asyncSpecifier != nil
+        isThrowing = throwsClause != nil
+        isRethrows = throwsClause?.throwsSpecifier.tokenKind == .keyword(.rethrows)
+        if let errorType = throwsClause?.type?.trimmedDescription {
+            typedError = ["Error", "any Error", "any Swift.Error"].contains(errorType) ? nil : errorType
+        } else {
+            typedError = nil
+        }
+
+        let genericParameters = declaration.genericParameterClause?.parameters
+        let explicitGenerics = genericParameters?.map(\.trimmedDescription) ?? []
+        let allGenerics = explicitGenerics + opaqueParameters.map { "\($0.name): \($0.constraint)" }
+        genericClause = allGenerics.isEmpty ? "" : "<\(allGenerics.joined(separator: ", "))>"
+        whereClause = declaration.genericWhereClause.map { " " + rewriteType($0, replacements: replacements, mockType: mockType) } ?? ""
+        genericTypes = ((genericParameters?.filter { $0.specifier == nil }.map { "\($0.name.text).self" } ?? [])
+            + opaqueParameters.map { "\($0.name).self" }).joined(separator: ", ")
+        packGenericNames = genericParameters?.compactMap { $0.specifier == nil ? nil : $0.name.text } ?? []
+
+        channelType = "\(isTransient ? "TransientMockMember" : "MockMember")<\(argumentsType), \(ephemeralArgumentsType), \(outputType)>"
     }
 
     var hasEphemeralDispatcher: Bool {
         !ephemeralParameters.isEmpty
-    }
-
-    var ephemeralArgumentsType: String {
-        if ephemeralParameters.isEmpty {
-            return "Void"
-        }
-        if ephemeralParameters.count == 1 {
-            return ephemeralParameters[0].type
-        }
-        return "(" + ephemeralParameters.map { "\($0.local): \($0.type)" }.joined(separator: ", ") + ")"
-    }
-
-    var argumentsType: String {
-        if isTransient, parameters.count > 1 {
-            return "_MockArguments_\(stableIdentifier(displayName))"
-        }
-        if parameters.count == 1, parameters[0].isPack {
-            return "(\(parameters[0].type))"
-        }
-        return switch parameters.count {
-            case 0: "Void"
-            case 1: parameters[0].type
-            default: "(" + parameters.map { "\($0.local): \($0.type)" }.joined(separator: ", ") + ")"
-        }
     }
 
     var argumentsExpression: String {
@@ -97,83 +166,18 @@ struct FunctionMember {
         }
     }
 
-    var outputType: String {
-        declaration.signature.returnClause.map { rewriteType($0.type, replacements: replacements, mockType: mockType) } ?? "Void"
-    }
-
     var defaultFallback: String? {
         guard !isStatic, !isThrowing, !isRethrows else {
             return nil
         }
         let policy = isAsync ? "_mocksmithDefaultPolicy" : "self._mocksmithDefaultPolicy"
-        if declaration.signature.returnClause.map({ isVoidType($0.type) }) ?? true {
+        if returnsVoid {
             return "{ switch \(policy) { case .void, .voidAndOptional: (); case .strict: preconditionFailure(\"Unstubbed nonthrowing member \(displayName)\") } }"
         }
-        if let returnType = declaration.signature.returnClause?.type, isOptionalType(returnType) {
+        if returnsOptional {
             return "{ switch \(policy) { case .voidAndOptional: nil; case .strict, .void: preconditionFailure(\"Unstubbed nonthrowing member \(displayName)\") } }"
         }
         return nil
-    }
-
-    var isStatic: Bool {
-        declaration.modifiers.contains { ["static", "class"].contains($0.name.text) }
-    }
-
-    var opaqueParameters: [(name: String, constraint: String)] {
-        declaration.signature.parameterClause.parameters.enumerated().compactMap { position, parameter in
-            opaqueParameterType(parameter.type.trimmedDescription, position: position)
-        }
-    }
-
-    func opaqueParameter(at position: Int) -> (name: String, constraint: String)? {
-        opaqueParameters.first { $0.name == "_MockOpaque\(position)" }
-    }
-
-    var isGeneric: Bool {
-        declaration.genericParameterClause != nil || !opaqueParameters.isEmpty
-    }
-
-    var availability: String {
-        availabilityAttributes(declaration.attributes)
-    }
-
-    var usesRegistry: Bool {
-        isGeneric || !availability.isEmpty
-    }
-
-    var isRethrows: Bool {
-        (declaration.signature.effectSpecifiers?.trimmedDescription ?? "").contains("rethrows")
-    }
-
-    var isThrowing: Bool {
-        (declaration.signature.effectSpecifiers?.trimmedDescription ?? "").contains("throws")
-    }
-
-    var isAsync: Bool {
-        (declaration.signature.effectSpecifiers?.trimmedDescription ?? "").contains("async")
-    }
-
-    var isTransient: Bool {
-        isTransientRequirement(declaration)
-    }
-
-    var genericClause: String {
-        let explicit = declaration.genericParameterClause?.parameters.map(\.trimmedDescription) ?? []
-        let opaque = opaqueParameters.map { "\($0.name): \($0.constraint)" }
-        let all = explicit + opaque
-        return all.isEmpty ? "" : "<\(all.joined(separator: ", "))>"
-    }
-
-    var whereClause: String {
-        declaration.genericWhereClause.map { " " + rewriteType($0, replacements: replacements, mockType: mockType) } ?? ""
-    }
-
-    var genericTypes: String {
-        ((declaration.genericParameterClause?.parameters.filter { $0.specifier == nil }.map { "\($0.name.text).self" } ?? []) + opaqueParameters.map { "\($0.name).self" }).joined(separator: ", ")
-    }
-
-    var packGenericNames: [String] {
-        declaration.genericParameterClause?.parameters.compactMap { $0.specifier == nil ? nil : $0.name.text } ?? []
     }
 
     var registrySetup: String {
@@ -211,10 +215,6 @@ struct FunctionMember {
         return "\(registrySetup.replacingOccurrences(of: "            ", with: "        "))let member: \(channelType) = _genericMockRegistry.member(key: \"\(channelName)\", typeIDs: \(registryTypes)) { \(channelConstructor) }\n        "
     }
 
-    var channelType: String {
-        "\(isTransient ? "TransientMockMember" : "MockMember")<\(argumentsType), \(ephemeralArgumentsType), \(outputType)>"
-    }
-
     var channelConstructor: String {
         "\(channelType)(name: \"\(displayName)\")"
     }
@@ -228,19 +228,6 @@ struct FunctionMember {
             return nil
         }
         return "    \(access)struct \(argumentsType): ~Copyable {\n" + parameters.map { "        let \($0.local): \($0.type)" }.joined(separator: "\n") + "\n    }"
-    }
-
-    var typedError: String? {
-        let effects = declaration.signature.effectSpecifiers?.trimmedDescription ?? ""
-        guard let start = effects.range(of: "throws("), let end = effects[start.upperBound...].firstIndex(of: ")") else {
-            return nil
-        }
-        let type = String(effects[start.upperBound ..< end]).trimmingCharacters(in: .whitespaces)
-        return ["Error", "any Error", "any Swift.Error"].contains(type) ? nil : type
-    }
-
-    var matcherDeclarations: String {
-        parameters.map(\.declaration).joined(separator: ", ")
     }
 
     var matcherClosure: String {
