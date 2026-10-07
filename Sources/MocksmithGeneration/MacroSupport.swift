@@ -43,6 +43,15 @@ func witnessAttributePrefix(_ attributes: AttributeListSyntax, indentation: Stri
     return values.isEmpty ? "" : values.joined(separator: "\n") + "\n"
 }
 
+/// Detects a `set` requirement by token, so a getter effect such as
+/// `throws(OffsetError)` cannot be mistaken for a setter.
+package func hasSetter(_ block: AccessorBlockSyntax?) -> Bool {
+    guard let block, case let .accessors(accessors) = block.accessors else {
+        return false
+    }
+    return accessors.contains { $0.accessorSpecifier.tokenKind == .keyword(.set) }
+}
+
 func accessorHeader(_ accessor: AccessorDeclSyntax) -> String {
     var copy = accessor
     copy.body = nil

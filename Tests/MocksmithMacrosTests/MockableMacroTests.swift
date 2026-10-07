@@ -641,6 +641,25 @@
             XCTAssertTrue(source.contains("get async"))
         }
 
+        func testTypedThrowsGetterNamesContainingSetStayReadOnly() throws {
+            let source = try peerSource(
+                """
+                protocol Service {
+                    var value: Int { get throws(OffsetError) }
+                    subscript(index: Int) -> Int { get throws(AssetError) }
+                    var settings: Int { get set }
+                }
+                """
+            )
+            XCTAssertTrue(source.contains("get throws(OffsetError)"))
+            XCTAssertTrue(source.contains("get throws(AssetError)"))
+            XCTAssertFalse(source.contains("_mock_value_set_"))
+            XCTAssertFalse(source.contains("_mock_subscript_set_"))
+            XCTAssertFalse(source.contains("func value(set matching:"))
+            XCTAssertTrue(source.contains("_mock_settings_set_"))
+            XCTAssertTrue(source.contains("func settings(set matching: Parameter<Int>)"))
+        }
+
         func testDiagnosesSwiftInvalidNoncopyableAssociatedType() {
             assertMacroExpansion(
                 """

@@ -859,13 +859,6 @@ private func mergeRequirements(
     return result
 }
 
-private func hasSetter(_ block: AccessorBlockSyntax?) -> Bool {
-    guard let block, case let .accessors(accessors) = block.accessors else {
-        return false
-    }
-    return accessors.contains { $0.accessorSpecifier.tokenKind == .keyword(.set) }
-}
-
 private func memberKey(_ declaration: DeclSyntax) -> String {
     let staticPrefix: String = {
         if let value = declaration.as(FunctionDeclSyntax.self) {

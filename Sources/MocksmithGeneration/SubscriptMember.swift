@@ -81,7 +81,7 @@ struct SubscriptMember {
             }
             return ParameterInfo(external: external, local: local, type: type, matcher: "matching\(position)", position: position)
         }
-        let settable = (declaration.accessorBlock?.trimmedDescription ?? "{ get }").contains("set")
+        let settable = hasSetter(declaration.accessorBlock)
         let valueType = rewriteType(declaration.returnClause.type, replacements: replacements, mockType: mockType)
         let isOptionalResult = isOptionalType(declaration.returnClause.type)
         let isVoidResult = isVoidType(declaration.returnClause.type)

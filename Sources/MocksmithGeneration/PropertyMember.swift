@@ -39,8 +39,7 @@ struct PropertyMember {
               let pattern = binding.pattern.as(IdentifierPatternSyntax.self), let annotation = binding.typeAnnotation else {
             return []
         }
-        let text = binding.accessorBlock?.trimmedDescription ?? "{ get }"
-        let settable = text.contains("set")
+        let settable = hasSetter(binding.accessorBlock)
         let isStatic = declaration.modifiers.contains { ["static", "class"].contains($0.name.text) }
         let nonisolatedModifier = declaration.modifiers.first(where: { $0.name.text == "nonisolated" })?.trimmedDescription ?? ""
         let type = rewriteType(annotation.type, replacements: replacements, mockType: mockType)

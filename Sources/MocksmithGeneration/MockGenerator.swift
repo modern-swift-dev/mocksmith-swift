@@ -160,7 +160,7 @@ package struct MockGenerator {
                 }
             }
             if let subscriptDecl = item.decl.as(SubscriptDeclSyntax.self) {
-                let settable = (subscriptDecl.accessorBlock?.trimmedDescription ?? "{ get }").contains("set")
+                let settable = hasSetter(subscriptDecl.accessorBlock)
                 let hasValuePack = subscriptDecl.genericParameterClause?.parameters.contains(where: { $0.specifier != nil }) == true
                 let transient = hasAttribute(named: "MockNoncopyable", in: subscriptDecl.attributes) || subscriptDecl.trimmedDescription.contains("~Copyable")
                 if transient, subscriptDecl.parameterClause.parameters.contains(where: {
