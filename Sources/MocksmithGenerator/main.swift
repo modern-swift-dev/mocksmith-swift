@@ -199,11 +199,33 @@ private struct SourceUnit {
     let tree: SourceFileSyntax
     let importedModules: Set<String>
     let imports: CodeBlockItemListSyntax
+    private let locations: LazySourceLocations
+
+    init(module: String, path: String, tree: SourceFileSyntax, importedModules: Set<String>, imports: CodeBlockItemListSyntax) {
+        self.module = module
+        self.path = path
+        self.tree = tree
+        self.importedModules = importedModules
+        self.imports = imports
+        locations = LazySourceLocations(path: path, tree: tree)
+    }
 
     func location(of node: some SyntaxProtocol) -> SourceDiagnostic.Location {
-        let converter = SourceLocationConverter(fileName: path, tree: tree)
-        let location = converter.location(for: node.positionAfterSkippingLeadingTrivia)
+        let location = locations.converter.location(for: node.positionAfterSkippingLeadingTrivia)
         return .init(path: path, line: location.line, column: location.column)
+    }
+}
+
+/// Builds the line table for a file on first use and shares it across every
+/// diagnostic reported against that file.
+private final class LazySourceLocations {
+    private(set) lazy var converter = SourceLocationConverter(fileName: path, tree: tree)
+    private let path: String
+    private let tree: SourceFileSyntax
+
+    init(path: String, tree: SourceFileSyntax) {
+        self.path = path
+        self.tree = tree
     }
 }
 
