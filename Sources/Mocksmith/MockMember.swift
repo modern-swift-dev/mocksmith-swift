@@ -129,42 +129,12 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     }
 
     public func invoke(_ arguments: Arguments, ephemeral: borrowing Ephemeral, unstubbed: (() -> Output)? = nil) throws -> Output {
-        let sequence = nextMockInvocationSequence()
-        let (snapshot, waiters) = lock.withLock { () -> (([Action], [Stub], [ActionStub]), [CheckedContinuation<Void, any Error>]) in
-            invocations.append(.init(sequence: sequence, arguments: arguments))
-            invocationGeneration &+= 1
-            return ((actions, stubs, actionStubs), drainInvocationWaiters())
-        }
-        waiters.forEach { $0.resume() }
-
-        let matchingActionStubs = snapshot.2.filter { $0.matches(arguments) }
-        let action = bestAction(in: snapshot.0, arguments: arguments)
-        let actionStub = bestActionStub(in: matchingActionStubs, forAction: true)
-        if let actionStub, action.map({ wins(actionStub.specificity, actionStub.id, over: $0.specificity, $0.id) }) ?? true {
-            actionStub.body(arguments, ephemeral)
-        } else {
-            action?.body(arguments, ephemeral)
-        }
-
-        let stub = bestStub(in: snapshot.1, arguments: arguments)
-        let actionStubOutcome = bestActionStub(in: matchingActionStubs, forAction: false)
-        let selected: (id: UInt64, outcomes: [StubOutcome<Arguments, Ephemeral, Output>])? = if let actionStubOutcome,
-                                                                                                stub
-                                                                                                .map({ wins(actionStubOutcome.specificity, actionStubOutcome.id, over: $0.specificity, $0.id) }) ??
-                                                                                                true {
-            (actionStubOutcome.id, actionStubOutcome.outcomes)
-        } else if let stub {
-            (stub.id, stub.outcomes)
-        } else {
-            nil
-        }
-        guard let selected else {
+        guard let outcome = selectOutcome(for: arguments, ephemeral: ephemeral) else {
             if let unstubbed {
                 return unstubbed()
             }
             throw MockError.unstubbed(name)
         }
-        let outcome = consumeOutcome(id: selected.id, outcomes: selected.outcomes)
         switch outcome {
             case let .returnValue(value): return value
             case let .throwError(error): throw error
@@ -187,42 +157,12 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         ephemeral: borrowing Ephemeral,
         unstubbed: (@Sendable () -> Output)? = nil
     ) async throws -> Output {
-        let sequence = nextMockInvocationSequence()
-        let (snapshot, waiters) = lock.withLock { () -> (([Action], [Stub], [ActionStub]), [CheckedContinuation<Void, any Error>]) in
-            invocations.append(.init(sequence: sequence, arguments: arguments))
-            invocationGeneration &+= 1
-            return ((actions, stubs, actionStubs), drainInvocationWaiters())
-        }
-        waiters.forEach { $0.resume() }
-
-        let matchingActionStubs = snapshot.2.filter { $0.matches(arguments) }
-        let action = bestAction(in: snapshot.0, arguments: arguments)
-        let actionStub = bestActionStub(in: matchingActionStubs, forAction: true)
-        if let actionStub, action.map({ wins(actionStub.specificity, actionStub.id, over: $0.specificity, $0.id) }) ?? true {
-            actionStub.body(arguments, ephemeral)
-        } else {
-            action?.body(arguments, ephemeral)
-        }
-
-        let stub = bestStub(in: snapshot.1, arguments: arguments)
-        let actionStubOutcome = bestActionStub(in: matchingActionStubs, forAction: false)
-        let selected: (id: UInt64, outcomes: [StubOutcome<Arguments, Ephemeral, Output>])? = if let actionStubOutcome,
-                                                                                                stub
-                                                                                                .map({ wins(actionStubOutcome.specificity, actionStubOutcome.id, over: $0.specificity, $0.id) }) ??
-                                                                                                true {
-            (actionStubOutcome.id, actionStubOutcome.outcomes)
-        } else if let stub {
-            (stub.id, stub.outcomes)
-        } else {
-            nil
-        }
-        guard let selected else {
+        guard let outcome = selectOutcome(for: arguments, ephemeral: ephemeral) else {
             if let unstubbed {
                 return unstubbed()
             }
             throw MockError.unstubbed(name)
         }
-        let outcome = consumeOutcome(id: selected.id, outcomes: selected.outcomes)
         switch outcome {
             case let .returnValue(value): return value
             case let .throwError(error): throw error
@@ -343,6 +283,37 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         }
         withExtendedLifetime(retired) {}
         waiters.forEach { $0.resume() }
+    }
+
+    /// Records the invocation, runs the winning action, and returns the next outcome of the winning stub, if any.
+    private func selectOutcome(for arguments: Arguments, ephemeral: borrowing Ephemeral) -> StubOutcome<Arguments, Ephemeral, Output>? {
+        let sequence = nextMockInvocationSequence()
+        let (snapshot, waiters) = lock.withLock { () -> (([Action], [Stub], [ActionStub]), [CheckedContinuation<Void, any Error>]) in
+            invocations.append(.init(sequence: sequence, arguments: arguments))
+            invocationGeneration &+= 1
+            return ((actions, stubs, actionStubs), drainInvocationWaiters())
+        }
+        waiters.forEach { $0.resume() }
+
+        let matchingActionStubs = snapshot.2.filter { $0.matches(arguments) }
+        let action = bestAction(in: snapshot.0, arguments: arguments)
+        let actionStub = bestActionStub(in: matchingActionStubs, forAction: true)
+        if let actionStub, action.map({ wins(actionStub.specificity, actionStub.id, over: $0.specificity, $0.id) }) ?? true {
+            actionStub.body(arguments, ephemeral)
+        } else {
+            action?.body(arguments, ephemeral)
+        }
+
+        let stub = bestStub(in: snapshot.1, arguments: arguments)
+        let actionStubOutcome = bestActionStub(in: matchingActionStubs, forAction: false)
+        if let actionStubOutcome,
+           stub.map({ wins(actionStubOutcome.specificity, actionStubOutcome.id, over: $0.specificity, $0.id) }) ?? true {
+            return consumeOutcome(id: actionStubOutcome.id, outcomes: actionStubOutcome.outcomes)
+        }
+        if let stub {
+            return consumeOutcome(id: stub.id, outcomes: stub.outcomes)
+        }
+        return nil
     }
 
     private func bestAction(in candidates: [Action], arguments: Arguments) -> Action? {
