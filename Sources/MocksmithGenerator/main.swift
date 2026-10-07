@@ -123,29 +123,62 @@ private struct GenerationCache: Codable {
     let source: String
 }
 
-private struct SourceInput: Codable, Equatable {
+private struct SourceInput {
     let module: String
     let path: String
     let source: String
+
+    var fingerprint: SourceFingerprint {
+        SourceFingerprint(module: module, path: path, digest: SHA256.hexDigest(of: source))
+    }
+}
+
+/// What the cache records about a source file: its content digest rather than
+/// its text, so the cache stays small while still detecting any edit.
+private struct SourceFingerprint: Codable, Equatable {
+    let module: String
+    let path: String
+    let digest: String
 }
 
 private struct SourceSnapshot: Codable, Equatable {
     let modules: [String]
-    let sources: [SourceInput]
+    let sources: [SourceFingerprint]
+    /// The texts behind `sources`, kept in memory for parsing but never cached.
+    let contents: [SourceInput]
 
-    init(targetOf arguments: Arguments) throws {
-        modules = Set(arguments.modules.map(\.name)).sorted()
-        sources = try Self.read(arguments.modules.filter { $0.name == arguments.targetModule })
+    private enum CodingKeys: String, CodingKey {
+        case modules
+        case sources
     }
 
-    init(modules: [String], sources: [SourceInput]) {
+    init(targetOf arguments: Arguments) throws {
+        self.init(
+            modules: Set(arguments.modules.map(\.name)).sorted(),
+            contents: try Self.read(arguments.modules.filter { $0.name == arguments.targetModule })
+        )
+    }
+
+    init(modules: [String], contents: [SourceInput]) {
         self.modules = modules
-        self.sources = sources
+        self.contents = contents
+        sources = contents.map(\.fingerprint)
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        modules = try container.decode([String].self, forKey: .modules)
+        sources = try container.decode([SourceFingerprint].self, forKey: .sources)
+        contents = []
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.modules == rhs.modules && lhs.sources == rhs.sources
     }
 
     func includingDependencies(from arguments: Arguments) throws -> Self {
         let dependencies = try Self.read(arguments.modules.filter { $0.name != arguments.targetModule })
-        return Self(modules: modules, sources: (sources + dependencies).sorted {
+        return Self(modules: modules, contents: (contents + dependencies).sorted {
             ($0.module, $0.path) < ($1.module, $1.path)
         })
     }
@@ -321,7 +354,7 @@ private final class Scanner {
         self.targetModule = targetModule
         availableSourceModules = Set(snapshot.modules)
 
-        let targetInputs = snapshot.sources.filter { $0.module == targetModule }
+        let targetInputs = snapshot.contents.filter { $0.module == targetModule }
         let targetCandidates = Self.parse(targetInputs, onlyMockableCandidates: true)
         try validateBuildPluginDeclarations(targetCandidates)
         usesDependencySources = targetCandidates.contains(where: requiresDependencySources)
@@ -331,7 +364,7 @@ private final class Scanner {
     /// Parses every protocol or typealias source not already loaded as a candidate.
     func loadRemainingSources(from snapshot: SourceSnapshot) {
         let loaded = Set(units.map { SourceKey(module: $0.module, path: $0.path) })
-        register(Self.parse(snapshot.sources.filter { !loaded.contains(SourceKey(module: $0.module, path: $0.path)) }))
+        register(Self.parse(snapshot.contents.filter { !loaded.contains(SourceKey(module: $0.module, path: $0.path)) }))
     }
 
     private func register(_ parsed: [SourceUnit]) {
@@ -389,7 +422,7 @@ private final class Scanner {
     func render(cached: GenerationCache?, identity: GeneratorIdentity?, snapshot: SourceSnapshot) throws -> GenerationCache {
         let snapshot = usesDependencySources ? snapshot : SourceSnapshot(
             modules: snapshot.modules,
-            sources: snapshot.sources.filter { $0.module == targetModule }
+            contents: snapshot.contents.filter { $0.module == targetModule }
         )
         let roots = protocols.values
             .flatMap(\.self)
