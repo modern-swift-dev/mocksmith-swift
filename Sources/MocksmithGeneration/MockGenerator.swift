@@ -8,9 +8,17 @@ import SwiftSyntaxMacros
 package struct MockGenerator {
     let protocolDecl: ProtocolDeclSyntax
     let isActor: Bool
-    let mockTypeOverride: String?
-    let conformanceTypeOverride: String?
-    let accessOverride: String?
+
+    /// Derived once per protocol; `render()` and the member models read these
+    /// repeatedly while walking the member block.
+    private let associatedTypes: [AssociatedTypeDeclSyntax]
+    private let replacements: [String: String]
+    private let mockType: String
+    private let conformanceType: String
+    private let isObjectiveC: Bool
+    private let hasGlobalActor: Bool
+    private let configurationIsolation: String
+    private let access: String
 
     package init(
         protocolDecl: ProtocolDeclSyntax,
@@ -21,50 +29,25 @@ package struct MockGenerator {
     ) {
         self.protocolDecl = protocolDecl
         self.isActor = isActor
-        self.mockTypeOverride = mockType
-        self.conformanceTypeOverride = conformanceType
-        self.accessOverride = access
-    }
 
-    private var associatedTypes: [AssociatedTypeDeclSyntax] {
-        protocolDecl.memberBlock.members.compactMap { $0.decl.as(AssociatedTypeDeclSyntax.self) }
-    }
-
-    private var replacements: [String: String] {
-        Dictionary(uniqueKeysWithValues: associatedTypes.map { ($0.name.text, $0.name.text + "Type") })
-    }
-
-    private var mockType: String {
-        mockTypeOverride ?? protocolDecl.name.text + "Mock"
-    }
-
-    private var conformanceType: String {
-        conformanceTypeOverride ?? protocolDecl.name.text
-    }
-
-    private var isObjectiveC: Bool {
-        hasAttribute(named: "objc", in: protocolDecl.attributes)
+        associatedTypes = protocolDecl.memberBlock.members.compactMap { $0.decl.as(AssociatedTypeDeclSyntax.self) }
+        replacements = Dictionary(uniqueKeysWithValues: associatedTypes.map { ($0.name.text, $0.name.text + "Type") })
+        self.mockType = mockType ?? protocolDecl.name.text + "Mock"
+        self.conformanceType = conformanceType ?? protocolDecl.name.text
+        isObjectiveC = hasAttribute(named: "objc", in: protocolDecl.attributes)
             || protocolDecl.inheritanceClause?.inheritedTypes.contains(where: { $0.type.trimmedDescription.hasSuffix("NSObjectProtocol") }) == true
-    }
-
-    private var hasGlobalActor: Bool {
-        protocolDecl.attributes.contains { element in
+        hasGlobalActor = protocolDecl.attributes.contains { element in
             guard let attribute = element.as(AttributeSyntax.self) else {
                 return false
             }
             let name = attribute.attributeName.trimmedDescription.split(separator: ".").last.map(String.init) ?? ""
             return name.hasSuffix("Actor") && name != "Mockable"
         }
+        configurationIsolation = isActor || hasGlobalActor ? "nonisolated " : ""
+        self.access = access ?? Self.declaredAccess(of: protocolDecl)
     }
 
-    private var configurationIsolation: String {
-        isActor || hasGlobalActor ? "nonisolated " : ""
-    }
-
-    private var access: String {
-        if let accessOverride {
-            return accessOverride
-        }
+    private static func declaredAccess(of protocolDecl: ProtocolDeclSyntax) -> String {
         for modifier in protocolDecl.modifiers {
             let value = modifier.name.text
             if value == "private" || value == "fileprivate" {
@@ -78,10 +61,6 @@ package struct MockGenerator {
     }
 
     private var members: [GeneratedMember] {
-        let replacements = replacements
-        let access = access
-        let mockType = mockType
-        let configurationIsolation = configurationIsolation
         var result: [GeneratedMember] = []
         for (index, item) in protocolDecl.memberBlock.members.enumerated() {
             if let function = item.decl.as(FunctionDeclSyntax.self) {
@@ -192,8 +171,7 @@ package struct MockGenerator {
     }
 
     package func render() -> String {
-        let associated = associatedTypes
-        let genericParts = associated.map { declaration -> String in
+        let genericParts = associatedTypes.map { declaration -> String in
             let inherited = declaration.inheritanceClause?.inheritedTypes.map {
                 rewriteType($0.type, replacements: replacements, mockType: mockType)
             }.joined(separator: " & ")
@@ -201,13 +179,13 @@ package struct MockGenerator {
             return genericName + (inherited.map { ": \($0)" } ?? "")
         }
         let generics = genericParts.isEmpty ? "" : "<\(genericParts.joined(separator: ", "))>"
-        let whereRequirements = associated.compactMap(\.genericWhereClause?.requirements)
+        let whereRequirements = associatedTypes.compactMap(\.genericWhereClause?.requirements)
             + [protocolDecl.genericWhereClause?.requirements].compactMap(\.self)
         let combinedWhere = whereRequirements.map {
             rewriteType($0, replacements: replacements, mockType: mockType)
         }.joined(separator: ", ")
         let mockWhere = combinedWhere.isEmpty ? "" : " where " + combinedWhere
-        let typealiases = associated.map { "    \(access)typealias \($0.name.text) = \($0.name.text)Type" }.joined(separator: "\n")
+        let typealiases = associatedTypes.map { "    \(access)typealias \($0.name.text) = \($0.name.text)Type" }.joined(separator: "\n")
         let typealiasSection = typealiases.isEmpty ? "" : typealiases + "\n\n"
         let availability = protocolDecl.attributes.compactMap { element -> String? in
             guard let attribute = element.as(AttributeSyntax.self) else {
