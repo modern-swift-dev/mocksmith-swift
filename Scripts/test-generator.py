@@ -65,6 +65,18 @@ protocol Parent {
         assert "@_MocksmithResolved" not in generated
         cached = cache.read_bytes()
 
+        # Large dependency graphs exceed NSTask's argument limit, so the plugin
+        # passes its arguments through a response file.
+        response_output = directory / "Response.swift"
+        response_file = directory / "arguments.txt"
+        response_file.write_text("\n".join([
+            "--output", str(response_output),
+            "--target-module", "Fixture", "--module", "Fixture",
+            str(declarations), str(unrelated),
+        ]))
+        subprocess.run([str(generator), f"@{response_file}"], cwd=root, check=True)
+        assert response_output.read_text() == generated
+
         # A prebuild plugin must expose only Swift sources, never its JSON cache.
         prebuild_output = directory / "GeneratedSources" / "Mocksmith.generated.swift"
         prebuild_cache = directory / "PrivateCache" / "generation.json"

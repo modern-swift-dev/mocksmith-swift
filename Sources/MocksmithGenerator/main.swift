@@ -13,7 +13,15 @@ private struct Arguments {
     let targetModule: String
     let modules: [ModuleInput]
 
-    init(_ values: [String]) throws {
+    init(_ arguments: [String]) throws {
+        var values = arguments
+        if values.count == 1, values[0].hasPrefix("@") {
+            let path = String(values[0].dropFirst())
+            guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+                throw GeneratorError.usage("cannot read response file '\(path)'")
+            }
+            values = contents.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        }
         var output: URL?
         var cache: URL?
         var targetModule: String?

@@ -63,6 +63,11 @@ import PackagePlugin
             return []
         }
         let executable = try context.tool(named: "MocksmithGenerator").url
+        // NSTask rejects more than 4096 arguments, which large dependency graphs
+        // exceed; pass the list through a response file instead.
+        let argumentsFile = context.pluginWorkDirectoryURL.appending(component: "arguments.txt")
+        try Data(arguments.joined(separator: "\n").utf8).write(to: argumentsFile, options: .atomic)
+        arguments = ["@\(argumentsFile.path)"]
         #if os(macOS)
             if ProcessInfo.processInfo.environment["MOCKSMITH_BUILD_GENERATOR_FROM_SOURCE"] != "1" {
                 // Xcode hashes per-target build commands in unordered dictionary order.
