@@ -6,45 +6,11 @@ public final class TransientMockMember<
     Ephemeral: ~Copyable,
     Output: ~Copyable
 >: @unchecked Sendable {
-    /// Index of the next outcome a stub returns; mutated only while holding `lock`.
-    private final class OutcomeCursor {
-        var next = 0
-    }
-
-    private struct Stub {
-        let id: UInt64
-        let matches: (borrowing Arguments) -> Bool
-        let specificity: Int
-        var outcomes: [TransientStubOutcome<Arguments, Ephemeral, Output>]
-        let cursor = OutcomeCursor()
-    }
-
-    private struct Action {
-        let id: UInt64
-        let matches: (borrowing Arguments) -> Bool
-        let body: (borrowing Arguments, borrowing Ephemeral) -> Void
-        let specificity: Int
-    }
-
-    private struct ActionStub {
-        let id: UInt64
-        let matches: (borrowing Arguments) -> Bool
-        let specificity: Int
-        let outcomes: [TransientStubOutcome<Arguments, Ephemeral, Output>]
-        let body: (borrowing Arguments, borrowing Ephemeral) -> Void
-        let cursor = OutcomeCursor()
-        var actionEnabled = true
-        var stubEnabled = true
-    }
-
     private let lock = NSLock()
     /// Recorded sequences in ascending order; they are assigned under `lock`.
     private var invocations: [UInt64] = []
     private var verifiedSequences: Set<UInt64> = []
-    private var stubs: [Stub] = []
-    private var actions: [Action] = []
-    private var actionStubs: [ActionStub] = []
-    private var nextID: UInt64 = 0
+    private var configuration = MockConfiguration<Arguments, Ephemeral, TransientStubOutcome<Arguments, Ephemeral, Output>>()
     private let name: String
 
     public init(name: String = "member") {
@@ -57,18 +23,9 @@ public final class TransientMockMember<
         outcomes: [TransientStubOutcome<Arguments, Ephemeral, Output>]
     ) -> _MocksmithTransientStubRegistration<Arguments, Ephemeral, Output> {
         precondition(!outcomes.isEmpty, "Mock stubs need at least one outcome")
-        let id = lock.withLock {
-            nextID += 1
-            stubs.append(Stub(id: nextID, matches: matching, specificity: specificity, outcomes: outcomes))
-            return nextID
-        }
+        let id = lock.withLock { configuration.addStub(matching: matching, specificity: specificity, outcomes: outcomes) }
         return _MocksmithTransientStubRegistration { [self] outcomes in
-            lock.withLock {
-                guard let index = stubs.firstIndex(where: { $0.id == id }) else {
-                    preconditionFailure("Mock stub registration is no longer active")
-                }
-                stubs[index].outcomes.append(contentsOf: outcomes)
-            }
+            lock.withLock { configuration.appendOutcomes(outcomes, toStub: id) }
         }
     }
 
@@ -77,10 +34,7 @@ public final class TransientMockMember<
         specificity: Int = 0,
         action: @escaping (borrowing Arguments, borrowing Ephemeral) -> Void
     ) {
-        lock.withLock {
-            nextID += 1
-            actions.append(Action(id: nextID, matches: matching, body: action, specificity: specificity))
-        }
+        lock.withLock { configuration.addAction(matching: matching, specificity: specificity, body: action) }
     }
 
     public func addAction(
@@ -100,18 +54,7 @@ public final class TransientMockMember<
         action: @escaping (borrowing Arguments, borrowing Ephemeral) -> Void
     ) {
         precondition(!outcomes.isEmpty, "Mock stubs need at least one outcome")
-        lock.withLock {
-            nextID += 1
-            actionStubs.append(
-                ActionStub(
-                    id: nextID,
-                    matches: matching,
-                    specificity: specificity,
-                    outcomes: outcomes,
-                    body: action
-                )
-            )
-        }
+        lock.withLock { configuration.addAction(matching: matching, specificity: specificity, outcomes: outcomes, body: action) }
     }
 
     public func addAction(
@@ -225,24 +168,12 @@ public final class TransientMockMember<
     public func reset(_ scopes: [MockScope] = Array(MockScope.all)) {
         let scopes = Set(scopes)
         let retired = lock.withLock {
-            let retired = (stubs, actions, actionStubs)
+            let retired = configuration
             if scopes.contains(.invocations) {
                 invocations.removeAll()
                 verifiedSequences.removeAll()
             }
-            if scopes.contains(.stubs) {
-                stubs.removeAll()
-                for index in actionStubs.indices {
-                    actionStubs[index].stubEnabled = false
-                }
-            }
-            if scopes.contains(.actions) {
-                actions.removeAll()
-                for index in actionStubs.indices {
-                    actionStubs[index].actionEnabled = false
-                }
-            }
-            actionStubs.removeAll { !$0.actionEnabled && !$0.stubEnabled }
+            configuration.reset(scopes)
             return retired
         }
         withExtendedLifetime(retired) {}
@@ -257,64 +188,9 @@ public final class TransientMockMember<
         // recording and snapshotting happen under the lock. Nothing in this section can throw.
         lock.lock()
         recordInvocation()
-        let actions = actions
-        let stubs = stubs
-        let actionStubs = actionStubs
+        let configuration = configuration
         lock.unlock()
-
-        // Winners are tracked by index so non-matching candidates are never copied out of the
-        // arrays. Each coupled matcher runs once and decides both its action and its stub side.
-        var actionStubAction: Int?
-        var actionStubOutcome: Int?
-        for index in 0 ..< actionStubs.count where actionStubs[index].matches(arguments) {
-            if actionStubs[index].actionEnabled, actionStubAction.map({ wins(actionStubs[index].specificity, actionStubs[index].id, over: actionStubs[$0].specificity, actionStubs[$0].id) }) ?? true {
-                actionStubAction = index
-            }
-            if actionStubs[index].stubEnabled, actionStubOutcome.map({ wins(actionStubs[index].specificity, actionStubs[index].id, over: actionStubs[$0].specificity, actionStubs[$0].id) }) ?? true {
-                actionStubOutcome = index
-            }
-        }
-
-        var action: Int?
-        for index in 0 ..< actions.count where actions[index].matches(arguments) {
-            if action.map({ wins(actions[index].specificity, actions[index].id, over: actions[$0].specificity, actions[$0].id) }) ?? true {
-                action = index
-            }
-        }
-        if let actionStubAction, action.map({ wins(actionStubs[actionStubAction].specificity, actionStubs[actionStubAction].id, over: actions[$0].specificity, actions[$0].id) }) ?? true {
-            actionStubs[actionStubAction].body(arguments, ephemeral)
-        } else if let action {
-            actions[action].body(arguments, ephemeral)
-        }
-
-        var stub: Int?
-        for index in 0 ..< stubs.count where stubs[index].matches(arguments) {
-            if stub.map({ wins(stubs[index].specificity, stubs[index].id, over: stubs[$0].specificity, stubs[$0].id) }) ?? true {
-                stub = index
-            }
-        }
-        if let actionStubOutcome, stub.map({ wins(actionStubs[actionStubOutcome].specificity, actionStubs[actionStubOutcome].id, over: stubs[$0].specificity, stubs[$0].id) }) ?? true {
-            return consumeOutcome(actionStubs[actionStubOutcome].outcomes, cursor: actionStubs[actionStubOutcome].cursor)
-        }
-        if let stub {
-            return consumeOutcome(stubs[stub].outcomes, cursor: stubs[stub].cursor)
-        }
-        return nil
-    }
-
-    private func wins(_ specificity: Int, _ id: UInt64, over otherSpecificity: Int, _ otherID: UInt64) -> Bool {
-        specificity > otherSpecificity || (specificity == otherSpecificity && id > otherID)
-    }
-
-    private func consumeOutcome(
-        _ outcomes: [TransientStubOutcome<Arguments, Ephemeral, Output>],
-        cursor: OutcomeCursor
-    ) -> TransientStubOutcome<Arguments, Ephemeral, Output> {
-        lock.lock()
-        let index = min(cursor.next, outcomes.count - 1)
-        cursor.next = index + 1
-        lock.unlock()
-        return outcomes[index]
+        return configuration.select(for: arguments, ephemeral: ephemeral)?.next(guardedBy: lock)
     }
 
     /// Must be called while holding `lock`. Assigning the sequence under the member lock keeps
