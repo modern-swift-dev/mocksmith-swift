@@ -8,7 +8,8 @@ public final class GenericMockRegistry: @unchecked Sendable {
     }
 
     private struct Entry {
-        let value: Any
+        let value: AnyObject
+        let type: ObjectIdentifier
         let reset: ([MockScope]) -> Void
         let invocations: () -> [_MocksmithInvocation]
         let unverifiedInvocations: () -> [_MocksmithInvocation]
@@ -50,25 +51,27 @@ public final class GenericMockRegistry: @unchecked Sendable {
         make: () -> MockMember<Arguments, Ephemeral, Output>
     ) -> MockMember<Arguments, Ephemeral, Output> {
         let lookup = Key(key: key, types: typeIDs)
-        precondition(lock.withLock { transientEntries[lookup] == nil }, "Generic mock member type changed for \(key)")
-        if let existing = lock.withLock({ entries[lookup] }) {
-            guard let member = existing.value as? MockMember<Arguments, Ephemeral, Output> else {
+        let type = ObjectIdentifier(MockMember<Arguments, Ephemeral, Output>.self)
+        // A key is never in both dictionaries, so a hit needs one lookup under one lock.
+        if let (value, existingType) = lock.withLock({ entries[lookup].map { ($0.value, $0.type) } }) {
+            guard existingType == type else {
                 preconditionFailure("Generic mock member type changed for \(key)")
             }
-            return member
+            return unsafeDowncast(value, to: MockMember<Arguments, Ephemeral, Output>.self)
         }
 
         let candidate = make()
         return lock.withLock {
             precondition(transientEntries[lookup] == nil, "Generic mock member type changed for \(key)")
             if let existing = entries[lookup] {
-                guard let member = existing.value as? MockMember<Arguments, Ephemeral, Output> else {
+                guard existing.type == type else {
                     preconditionFailure("Generic mock member type changed for \(key)")
                 }
-                return member
+                return unsafeDowncast(existing.value, to: MockMember<Arguments, Ephemeral, Output>.self)
             }
             entries[lookup] = Entry(
                 value: candidate,
+                type: type,
                 reset: candidate.reset,
                 invocations: { candidate.orderedInvocations },
                 unverifiedInvocations: { candidate._mocksmithUnverifiedInvocations }
@@ -92,12 +95,12 @@ public final class GenericMockRegistry: @unchecked Sendable {
     ) -> TransientMockMember<Arguments, Ephemeral, Output> {
         let lookup = Key(key: key, types: typeIDs)
         let type = ObjectIdentifier(TransientMockMember<Arguments, Ephemeral, Output>.self)
-        precondition(lock.withLock { entries[lookup] == nil }, "Generic mock member type changed for \(key)")
-        if let existing = lock.withLock({ transientEntries[lookup] }) {
-            guard existing.type == type else {
+        // A key is never in both dictionaries, so a hit needs one lookup under one lock.
+        if let (pointer, existingType) = lock.withLock({ transientEntries[lookup].map { ($0.pointer, $0.type) } }) {
+            guard existingType == type else {
                 preconditionFailure("Generic mock member type changed for \(key)")
             }
-            return Unmanaged<TransientMockMember<Arguments, Ephemeral, Output>>.fromOpaque(existing.pointer).takeUnretainedValue()
+            return Unmanaged<TransientMockMember<Arguments, Ephemeral, Output>>.fromOpaque(pointer).takeUnretainedValue()
         }
 
         let candidate = make()
