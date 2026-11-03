@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Thread-safe, count-only runtime channel for transient arguments and results.
 public final class TransientMockMember<
@@ -6,7 +7,7 @@ public final class TransientMockMember<
     Ephemeral: ~Copyable,
     Output: ~Copyable
 >: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = Mutex(())
     /// Recorded sequences in ascending order; they are assigned under `lock`.
     private var invocations: [UInt64] = []
     private var verifiedSequences: Set<UInt64> = []
@@ -23,9 +24,9 @@ public final class TransientMockMember<
         outcomes: [TransientStubOutcome<Arguments, Ephemeral, Output>]
     ) -> _MocksmithTransientStubRegistration<Arguments, Ephemeral, Output> {
         precondition(!outcomes.isEmpty, "Mock stubs need at least one outcome")
-        let id = lock.withLock { configuration.addStub(matching: matching, specificity: specificity, outcomes: outcomes) }
+        let id = lock.withLock { _ in configuration.addStub(matching: matching, specificity: specificity, outcomes: outcomes) }
         return _MocksmithTransientStubRegistration { [self] outcomes in
-            lock.withLock { configuration.appendOutcomes(outcomes, toStub: id) }
+            lock.withLock { _ in configuration.appendOutcomes(outcomes, toStub: id) }
         }
     }
 
@@ -34,7 +35,7 @@ public final class TransientMockMember<
         specificity: Int = 0,
         action: @escaping (borrowing Arguments, borrowing Ephemeral) -> Void
     ) {
-        lock.withLock { configuration.addAction(matching: matching, specificity: specificity, body: action) }
+        lock.withLock { _ in configuration.addAction(matching: matching, specificity: specificity, body: action) }
     }
 
     public func addAction(
@@ -54,7 +55,7 @@ public final class TransientMockMember<
         action: @escaping (borrowing Arguments, borrowing Ephemeral) -> Void
     ) {
         precondition(!outcomes.isEmpty, "Mock stubs need at least one outcome")
-        lock.withLock { configuration.addAction(matching: matching, specificity: specificity, outcomes: outcomes, body: action) }
+        lock.withLock { _ in configuration.addAction(matching: matching, specificity: specificity, outcomes: outcomes, body: action) }
     }
 
     public func addAction(
@@ -123,21 +124,21 @@ public final class TransientMockMember<
     }
 
     public func record() {
-        lock.withLock { recordInvocation() }
+        lock.withLock { _ in recordInvocation() }
     }
 
     public var invocationCount: Int {
-        lock.withLock { invocations.count }
+        lock.withLock { _ in invocations.count }
     }
 
     public var orderedInvocations: [_MocksmithInvocation] {
-        lock.withLock {
+        lock.withLock { _ in
             invocations.map { .init(sequence: $0, member: name) }
         }
     }
 
     public var _mocksmithUnverifiedInvocations: [_MocksmithInvocation] {
-        lock.withLock {
+        lock.withLock { _ in
             invocations.compactMap {
                 verifiedSequences.contains($0) ? nil : .init(sequence: $0, member: name)
             }
@@ -149,11 +150,11 @@ public final class TransientMockMember<
     }
 
     public func matchesInvocation(sequence: UInt64) -> Bool {
-        lock.withLock { invocations.sortedIndex(of: sequence) != nil }
+        lock.withLock { _ in invocations.sortedIndex(of: sequence) != nil }
     }
 
     public func verification(count: Count) -> VerificationResult {
-        let snapshot = lock.withLock { invocations }
+        let snapshot = lock.withLock { _ in invocations }
         let actual = snapshot.count
         let success = count.matches(actual)
         if success {
@@ -167,7 +168,7 @@ public final class TransientMockMember<
 
     public func reset(_ scopes: [MockScope] = Array(MockScope.all)) {
         let scopes = Set(scopes)
-        let retired = lock.withLock {
+        let retired = lock.withLock { _ in
             let retired = configuration
             if scopes.contains(.invocations) {
                 invocations.removeAll()
@@ -185,12 +186,14 @@ public final class TransientMockMember<
         ephemeral: borrowing Ephemeral
     ) -> TransientStubOutcome<Arguments, Ephemeral, Output>? {
         // Matchers, actions, and answers are user code that may reenter this member, so only
-        // recording and snapshotting happen under the lock. Nothing in this section can throw.
-        lock.lock()
-        recordInvocation()
-        let configuration = configuration
-        lock.unlock()
-        return configuration.select(for: arguments, ephemeral: ephemeral)?.next()
+        // recording and snapshotting happen under the lock. Assigning the snapshot rather than returning
+        // it from `withLock` avoids generic metadata lookups on every call.
+        var snapshot: MockConfiguration<Arguments, Ephemeral, TransientStubOutcome<Arguments, Ephemeral, Output>>?
+        lock.withLock { _ in
+            recordInvocation()
+            snapshot = configuration
+        }
+        return snapshot?.select(for: arguments, ephemeral: ephemeral)?.next()
     }
 
     /// Must be called while holding `lock`. Assigning the sequence under the member lock keeps
@@ -201,7 +204,7 @@ public final class TransientMockMember<
     }
 
     private func markVerified(_ sequences: [UInt64]) {
-        lock.withLock {
+        lock.withLock { _ in
             verifiedSequences.formUnion(sequences.filter { invocations.sortedIndex(of: $0) != nil })
         }
     }
