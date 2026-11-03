@@ -114,6 +114,19 @@ VerifyInOrder(.relaxed) { order in
 }
 ```
 
+## Isolate static mocks in parallel tests
+
+Static mocks share a process-wide registry. The `.isolatedStaticMocks` trait gives each test its own, so parallel tests can stub the same static member differently. In XCTest, wrap the test body in `withIsolatedStaticMocks { }`. Calls from `Task.detached`, Dispatch queues, or other threads that don't inherit task-local values still use the shared registry.
+
+Static mock isolation
+
+```swift
+@Test(.isolatedStaticMocks) func makesTwo() {
+    Given(ServiceMock.self).make(.value(2)).willReturn("two")
+    #expect(ServiceMock.make(2) == "two")
+}
+```
+
 ## Run the complete samples
 
 The repository covers callbacks, generics, actors, inherited protocols, noncopyable inputs, XCTest, and strict-order verification.

@@ -26,7 +26,14 @@ public final class StaticMockRegistry: @unchecked Sendable {
         let release: () -> Void
     }
 
-    public static let shared = StaticMockRegistry()
+    /// The registry generated static mocks use: the one ``withIsolatedStaticMocks(isolation:_:)`` installed
+    /// for the current task, or else the process-wide default registry.
+    public static var shared: StaticMockRegistry {
+        isolated ?? global
+    }
+
+    @TaskLocal static var isolated: StaticMockRegistry?
+    private static let global = StaticMockRegistry()
 
     private let lock = NSLock()
     private var entries: [Key: Entry] = [:]

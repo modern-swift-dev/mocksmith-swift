@@ -280,6 +280,32 @@ Verify(mock, 1).subscriptGet(.value("answer"))
 
 Static state is isolated by concrete mock metatype and generic specialization. Required initializers construct without stubbing, record their arguments, and can be checked with `Verify(mock).initializer(...)`. Generic initializers and value-pack initializers use the same typed verification selector.
 
+### Static mocks and parallel tests
+
+Static mock state lives in a process-wide registry, so tests that run in parallel and use the same static mock see each other's stubs and calls. Swift Testing runs tests in parallel by default; give each test its own registry with the `.isolatedStaticMocks` trait:
+
+```swift
+@Test(.isolatedStaticMocks) func makesTwo() {
+    Given(ServiceMock.self).make(.value(2)).willReturn("two")
+    #expect(ServiceMock.make(2) == "two")
+}
+
+@Suite(.isolatedStaticMocks) struct ServiceTests { /* each test gets its own registry */ }
+```
+
+From XCTest or any async code, scope the registry yourself:
+
+```swift
+func testMakesTwo() async {
+    await withIsolatedStaticMocks {
+        Given(ServiceMock.self).make(.value(2)).willReturn("two")
+        XCTAssertEqual(ServiceMock.make(2), "two")
+    }
+}
+```
+
+The isolated registry is a task-local value: it covers the test body, its child tasks, and `Task { }` started inside it. Calls made from `Task.detached`, Dispatch queues, or threads that don't inherit task-local values use the process-wide registry instead.
+
 ## Noncopyable requirements
 
 Use `@MockNoncopyable` when a requirement mentions a named noncopyable type. Requirements that syntactically use `~Copyable` are selected automatically:
