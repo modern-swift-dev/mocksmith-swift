@@ -225,6 +225,38 @@ import Dependency
         assert "func parent()" in lazy_output.read_text()
         assert "func grandparent()" in lazy_output.read_text()
 
+        # Many mocks share parents, reached through diamonds, aliases, and in
+        # different orders. Each mock still gets every requirement exactly once,
+        # parents first.
+        shared = directory / "Shared"
+        shared.mkdir()
+        shared_base = shared / "Base.swift"
+        shared_base.write_text("""public protocol SharedRoot { func root() -> Int }
+public protocol SharedLeft: SharedRoot { func left() -> Int }
+public protocol SharedRight: SharedRoot, Sendable {
+    func right() -> Int
+    func root() -> Int
+}
+public typealias SharedBoth = SharedLeft & SharedRight
+""")
+        shared_children = shared / "Children.swift"
+        shared_children.write_text("import Mocksmith\nimport SharedBase\n" + "".join(
+            f"@Mockable protocol Shared{index}: {'SharedBoth' if index % 2 else 'SharedRight, SharedLeft'} {{ func own() }}\n"
+            for index in range(40)
+        ))
+        shared_output = shared / "Generated.swift"
+        subprocess.run([
+            str(generator), "--output", str(shared_output), "--target-module", "SharedFixture",
+            "--module", "SharedFixture", str(shared_children), "--module", "SharedBase", str(shared_base),
+        ], cwd=root, check=True)
+        shared_mocks = shared_output.read_text().split("final class Shared")[1:]
+        assert len(shared_mocks) == 40
+        for index, mock in enumerate(sorted(shared_mocks, key=lambda text: int(text.split("Mock")[0]))):
+            names = ["root", "right", "left"] if index % 2 == 0 else ["root", "left", "right"]
+            positions = [mock.index(f'(name: "{name}")') for name in names + ["own"]]
+            assert positions == sorted(positions), (index, names)
+            assert all(mock.count(f'(name: "{name}")') == 1 for name in names + ["own"])
+
         # Files that were absent from the snapshot must still be read each run.
         unrelated.write_text("@Mockable protocol AddedService {}\n")
         assert "AddedServiceMock" in generate()

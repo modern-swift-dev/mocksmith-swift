@@ -327,6 +327,45 @@ private enum ResolvedDeclaration: Hashable {
     case alias(DeclarationID)
 }
 
+/// A protocol or alias with everything it inherits, parents first.
+private struct InheritanceClosure {
+    private(set) var protocols: [ProtocolRecord] = []
+    private(set) var aliases: [AliasRecord] = []
+    private(set) var markers = Set<String>()
+    private var protocolIDs = Set<DeclarationID>()
+    private var aliasIDs = Set<DeclarationID>()
+
+    init() {}
+
+    init(marker: String) {
+        markers = [marker]
+    }
+
+    /// Keeps the first occurrence of each declaration, matching a depth-first
+    /// walk that skips already visited declarations.
+    mutating func append(_ other: Self) {
+        for record in other.protocols where protocolIDs.insert(record.id).inserted {
+            protocols.append(record)
+        }
+        for record in other.aliases where aliasIDs.insert(record.id).inserted {
+            aliases.append(record)
+        }
+        markers.formUnion(other.markers)
+    }
+
+    mutating func append(_ record: ProtocolRecord) {
+        if protocolIDs.insert(record.id).inserted {
+            protocols.append(record)
+        }
+    }
+
+    mutating func append(_ record: AliasRecord) {
+        if aliasIDs.insert(record.id).inserted {
+            aliases.append(record)
+        }
+    }
+}
+
 private struct FlattenedProtocol {
     let records: [ProtocolRecord]
     let aliases: [AliasRecord]
@@ -371,6 +410,11 @@ private final class Scanner {
     /// Unparsed sources by module and by a name they may declare.
     private var declarationIndex: [String: [String: [SourceInput]]] = [:]
     private var loadedSources = Set<SourceKey>()
+    private var closures: [ResolvedDeclaration: InheritanceClosure] = [:]
+    private var resolving = Set<ResolvedDeclaration>()
+    private var memberKeys: [SyntaxIdentifier: String] = [:]
+    private var memberTexts: [SyntaxIdentifier: String] = [:]
+    private var importTexts: [Int: [String]] = [:]
 
     /// Parses only the target module's candidates. Call `loadRemainingSources`
     /// before rendering when `usesDependencySources` is true.
@@ -496,7 +540,7 @@ private final class Scanner {
             }
 
         var preparedMocks: [PreparedMock] = []
-        var importTexts = Set(["import Mocksmith"])
+        var importLines = Set(["import Mocksmith"])
         for root in roots {
             loadDeclarations(named: root.id.name, in: root.id.module)
             if protocols[root.id]?.count != 1 {
@@ -508,20 +552,14 @@ private final class Scanner {
 
             let contributingUnits = Set(flattened.records.map(\.unit) + flattened.aliases.map(\.unit))
             for unitIndex in contributingUnits {
-                let unit = units[unitIndex]
-                if unit.module != targetModule {
-                    importTexts.insert("import \(unit.module)")
-                }
-                for statement in importStatements(in: unit.imports, excluding: targetModule) {
-                    importTexts.insert(statement.trimmedDescription)
-                }
+                importLines.formUnion(importTexts(of: unitIndex))
             }
         }
 
         let input = GenerationInput(
             targetModule: targetModule,
             mocks: preparedMocks.map(\.input),
-            imports: importTexts.sorted()
+            imports: importLines.sorted()
         )
         if let identity, let cached, cached.generator == identity, cached.input == input {
             return GenerationCache(
@@ -539,73 +577,21 @@ private final class Scanner {
         )
     }
 
+    /// The import statements a mock needs for declarations from this unit.
+    private func importTexts(of unitIndex: Int) -> [String] {
+        if let texts = importTexts[unitIndex] {
+            return texts
+        }
+        let unit = units[unitIndex]
+        var texts = unit.module == targetModule ? [] : ["import \(unit.module)"]
+        texts += importStatements(in: unit.imports, excluding: targetModule).map(\.trimmedDescription)
+        importTexts[unitIndex] = texts
+        return texts
+    }
+
     private func flatten(_ root: ProtocolRecord) throws -> FlattenedProtocol {
-        var visiting = Set<ResolvedDeclaration>()
-        var visitedProtocols = Set<DeclarationID>()
-        var visitedAliases = Set<DeclarationID>()
-        var orderedProtocols: [ProtocolRecord] = []
-        var orderedAliases: [AliasRecord] = []
-        var markers = Set<String>()
-
-        func visitReference(_ reference: TypeReference, from unit: Int) throws {
-            if markerNames.contains(reference.name) {
-                markers.insert(reference.name)
-                return
-            }
-            if reference.hasGenericArguments {
-                throw GeneratorError.source(
-                    units[unit].location(of: units[unit].tree),
-                    "generic inherited protocol references are not supported: '\(reference.name)'"
-                )
-            }
-            switch try resolve(reference, from: unit) {
-                case let .protocolDecl(id):
-                    try visitProtocol(try uniqueProtocol(id, referencedFrom: unit))
-                case let .alias(id):
-                    try visitAlias(try uniqueAlias(id, referencedFrom: unit))
-            }
-        }
-
-        func visitProtocol(_ record: ProtocolRecord) throws {
-            guard !visitedProtocols.contains(record.id) else {
-                return
-            }
-            let node = ResolvedDeclaration.protocolDecl(record.id)
-            guard visiting.insert(node).inserted else {
-                throw sourceError(at: record, "protocol inheritance cycle involving '\(record.id)'")
-            }
-            defer { visiting.remove(node) }
-
-            for inherited in record.declaration.inheritanceClause?.inheritedTypes ?? [] {
-                for reference in try references(in: inherited.type, unit: record.unit) {
-                    try visitReference(reference, from: record.unit)
-                }
-            }
-            visitedProtocols.insert(record.id)
-            orderedProtocols.append(record)
-        }
-
-        func visitAlias(_ record: AliasRecord) throws {
-            guard !visitedAliases.contains(record.id) else {
-                return
-            }
-            if record.declaration.genericParameterClause != nil || record.declaration.genericWhereClause != nil {
-                throw sourceError(at: record, "generic protocol-composition alias '\(record.id)' is not supported")
-            }
-            let node = ResolvedDeclaration.alias(record.id)
-            guard visiting.insert(node).inserted else {
-                throw sourceError(at: record, "protocol-composition alias cycle involving '\(record.id)'")
-            }
-            defer { visiting.remove(node) }
-
-            for reference in try references(in: record.declaration.initializer.value, unit: record.unit) {
-                try visitReference(reference, from: record.unit)
-            }
-            visitedAliases.insert(record.id)
-            orderedAliases.append(record)
-        }
-
-        try visitProtocol(root)
+        let closure = try inheritanceClosure(of: root)
+        let orderedProtocols = closure.protocols
 
         var memberOrder: [String] = []
         var membersByKey: [String: MemberBlockItemSyntax] = [:]
@@ -616,7 +602,7 @@ private final class Scanner {
 
         for record in orderedProtocols {
             for member in record.declaration.memberBlock.members {
-                let key = memberKey(member.decl)
+                let key = cachedMemberKey(member)
                 if membersByKey[key] == nil {
                     memberOrder.append(key)
                 }
@@ -641,12 +627,83 @@ private final class Scanner {
 
         return FlattenedProtocol(
             records: orderedProtocols,
-            aliases: orderedAliases,
+            aliases: closure.aliases,
             members: memberOrder.compactMap { membersByKey[$0] },
-            markers: markers,
+            markers: closure.markers,
             attributes: attributes,
             whereRequirements: whereRequirements
         )
+    }
+
+    /// Shared parents are resolved once per run rather than once per mock.
+    private func inheritanceClosure(of record: ProtocolRecord) throws -> InheritanceClosure {
+        let node = ResolvedDeclaration.protocolDecl(record.id)
+        if let closure = closures[node] {
+            return closure
+        }
+        guard resolving.insert(node).inserted else {
+            throw sourceError(at: record, "protocol inheritance cycle involving '\(record.id)'")
+        }
+        defer { resolving.remove(node) }
+
+        var closure = InheritanceClosure()
+        for inherited in record.declaration.inheritanceClause?.inheritedTypes ?? [] {
+            for reference in try references(in: inherited.type, unit: record.unit) {
+                try closure.append(inheritanceClosure(of: reference, from: record.unit))
+            }
+        }
+        closure.append(record)
+        closures[node] = closure
+        return closure
+    }
+
+    private func inheritanceClosure(of record: AliasRecord) throws -> InheritanceClosure {
+        let node = ResolvedDeclaration.alias(record.id)
+        if let closure = closures[node] {
+            return closure
+        }
+        if record.declaration.genericParameterClause != nil || record.declaration.genericWhereClause != nil {
+            throw sourceError(at: record, "generic protocol-composition alias '\(record.id)' is not supported")
+        }
+        guard resolving.insert(node).inserted else {
+            throw sourceError(at: record, "protocol-composition alias cycle involving '\(record.id)'")
+        }
+        defer { resolving.remove(node) }
+
+        var closure = InheritanceClosure()
+        for reference in try references(in: record.declaration.initializer.value, unit: record.unit) {
+            try closure.append(inheritanceClosure(of: reference, from: record.unit))
+        }
+        closure.append(record)
+        closures[node] = closure
+        return closure
+    }
+
+    private func inheritanceClosure(of reference: TypeReference, from unit: Int) throws -> InheritanceClosure {
+        if markerNames.contains(reference.name) {
+            return InheritanceClosure(marker: reference.name)
+        }
+        if reference.hasGenericArguments {
+            throw GeneratorError.source(
+                units[unit].location(of: units[unit].tree),
+                "generic inherited protocol references are not supported: '\(reference.name)'"
+            )
+        }
+        switch try resolve(reference, from: unit) {
+            case let .protocolDecl(id):
+                return try inheritanceClosure(of: uniqueProtocol(id, referencedFrom: unit))
+            case let .alias(id):
+                return try inheritanceClosure(of: uniqueAlias(id, referencedFrom: unit))
+        }
+    }
+
+    private func cachedMemberKey(_ member: MemberBlockItemSyntax) -> String {
+        if let key = memberKeys[member.id] {
+            return key
+        }
+        let key = memberKey(member.decl)
+        memberKeys[member.id] = key
+        return key
     }
 
     private func resolve(_ reference: TypeReference, from unit: Int) throws -> ResolvedDeclaration {
@@ -798,7 +855,14 @@ private final class Scanner {
             ? ""
             : " where " + flattened.whereRequirements.joined(separator: ", ")
         let members = flattened.members
-            .map { indent($0.decl.trimmedDescription, by: 4) }
+            .map { member in
+                if let text = memberTexts[member.id] {
+                    return text
+                }
+                let text = indent(member.decl.trimmedDescription, by: 4)
+                memberTexts[member.id] = text
+                return text
+            }
             .joined(separator: "\n")
         let source = """
         \(attributeLines.joined(separator: "\n"))

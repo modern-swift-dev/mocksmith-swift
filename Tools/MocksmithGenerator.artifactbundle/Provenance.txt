@@ -3,7 +3,7 @@ Source: https://github.com/modern-swift-dev/mocksmith-swift
 Recipe: Scripts/build-generator-artifact.sh
 Configuration: Release; arm64 + x86_64; minimum macOS 13.0
 Signing: ad hoc, no timestamp
-Source revision: 1d17bb832279cf21a997fd06a22e094bf5216c58
+Source revision: dc1aae9100eeb234b617d411dfd82391fe676da0
 Sources.sha256 identifies the exact build inputs, including uncommitted edits.
 SwiftSyntax revision: 79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1
 SwiftSyntax source: https://github.com/swiftlang/swift-syntax
