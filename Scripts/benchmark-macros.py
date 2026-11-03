@@ -99,8 +99,10 @@ def main():
                 compile_sources()
                 samples.append(perf_counter() - start)
             start = perf_counter()
-            # The build tool is skipped when none of its inputs changed. This still
-            # invokes swiftc; an Xcode no-op build may skip the compiler entirely.
+            # This times only swiftc. The generator is excluded, but on macOS the
+            # plugin's prebuild command runs it on every build, unchanged or not;
+            # only the Linux build command is skipped when its inputs are unchanged.
+            # An Xcode no-op build may skip the compiler entirely.
             subprocess.run(command, cwd=root, check=True)
             unchanged = perf_counter() - start
             print(
