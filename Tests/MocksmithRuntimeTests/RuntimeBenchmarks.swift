@@ -1,6 +1,7 @@
 import Dispatch
 import Foundation
 import Mocksmith
+import Synchronization
 import Testing
 
 // Runtime hot-path timings. Skipped unless MOCKSMITH_BENCHMARK=1; they print
@@ -27,16 +28,15 @@ private func report(_ name: String, _ duration: Duration, per operations: Int, u
     print("[benchmark] \(name): \(String(format: "%.3f", each)) µs/\(unit) (\(String(format: "%.1f", total / 1000)) ms total)")
 }
 
-final class EvaluationCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var count = 0
+final class EvaluationCounter: Sendable {
+    private let count = Mutex(0)
 
     var value: Int {
-        lock.withLock { count }
+        count.withLock { $0 }
     }
 
     func increment() {
-        lock.withLock { count += 1 }
+        count.withLock { $0 += 1 }
     }
 }
 

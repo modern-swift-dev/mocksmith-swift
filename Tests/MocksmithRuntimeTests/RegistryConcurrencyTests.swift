@@ -1,23 +1,22 @@
 import Dispatch
-import Foundation
 import Mocksmith
+import Synchronization
 import Testing
 
 /// Collects the identities of members returned from concurrent registry lookups.
-private final class Identities: @unchecked Sendable {
-    private let lock = NSLock()
-    private var values: [ObjectIdentifier] = []
+private final class Identities: Sendable {
+    private let values = Mutex<[ObjectIdentifier]>([])
 
     var unique: Set<ObjectIdentifier> {
-        lock.withLock { Set(values) }
+        values.withLock { Set($0) }
     }
 
     var count: Int {
-        lock.withLock { values.count }
+        values.withLock { $0.count }
     }
 
     func append(_ object: AnyObject) {
-        lock.withLock { values.append(ObjectIdentifier(object)) }
+        values.withLock { $0.append(ObjectIdentifier(object)) }
     }
 }
 

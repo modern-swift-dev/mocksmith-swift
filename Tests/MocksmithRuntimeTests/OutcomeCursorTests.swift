@@ -1,19 +1,18 @@
 import Dispatch
-import Foundation
 import Mocksmith
+import Synchronization
 import Testing
 
 /// Collects the outcomes returned to concurrent callers.
-private final class Results: @unchecked Sendable {
-    private let lock = NSLock()
-    private var values: [Int] = []
+private final class Results: Sendable {
+    private let values = Mutex<[Int]>([])
 
     var counts: [Int: Int] {
-        lock.withLock { values.reduce(into: [:]) { $0[$1, default: 0] += 1 } }
+        values.withLock { $0.reduce(into: [:]) { $0[$1, default: 0] += 1 } }
     }
 
     func append(contentsOf newValues: [Int]) {
-        lock.withLock { values.append(contentsOf: newValues) }
+        values.withLock { $0.append(contentsOf: newValues) }
     }
 }
 
