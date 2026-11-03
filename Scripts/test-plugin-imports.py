@@ -6,29 +6,34 @@ import os
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
+import time
 
 
 def main():
     root = Path(__file__).resolve().parent.parent
     plugin = root / "Plugins/MocksmithBuildPlugin"
     source = (plugin / "ImportScanner.swift").read_text()
-    marker = "entry = ImportCache.Entry(digest: digest, modules:"
-    assert source.count(marker) == 1, "Update cache-miss instrumentation for the scanner implementation"
-    # Count real cache misses in the copied implementation, without modifying
-    # production code or using wall-clock thresholds to infer reuse.
-    source = "nonisolated(unsafe) private var scanCount = 0\n" + source.replace(
-        marker, "scanCount += 1\n                " + marker
-    )
+    # Count real file reads and import scans in the copied implementation, without
+    # modifying production code or using wall-clock thresholds to infer reuse.
+    counters = "nonisolated(unsafe) private var scanCount = 0\nnonisolated(unsafe) private var readCount = 0\n"
+    for counter, marker in [
+        ("scanCount", "entry = ImportCache.Entry(digest: digest, metadata: trustedMetadata, modules: Set(imports))"),
+        ("readCount", "let data = try Data(contentsOf: path)"),
+    ]:
+        assert source.count(marker) == 1, "Update cache instrumentation for the scanner implementation"
+        source = source.replace(marker, f"{counter} += 1\n{marker}")
+    source = counters + source
     source += '''
 struct Result: Encodable {
     let imports: [String]
     let scans: Int
+    let reads: Int
 }
 var scanner = ImportScanner(cacheURL: URL(fileURLWithPath: CommandLine.arguments[1]))
 let paths = CommandLine.arguments.dropFirst(2).map { URL(fileURLWithPath: $0) }
 let imports = try scanner.importedModuleNames(in: paths)
 try scanner.save()
-let result = Result(imports: imports.sorted(), scans: scanCount)
+let result = Result(imports: imports.sorted(), scans: scanCount, reads: readCount)
 print(String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
 '''
 
@@ -75,30 +80,49 @@ import FakeRawMultiline
             "PublicModule", "ScopedModule", "ConditionalModule",
         }
 
-        def scan(expected_scans):
+        def scan(expected_scans, expected_reads=None):
             result = json.loads(subprocess.check_output([
                 str(executable), str(cache), *map(str, paths)
             ], cwd=root, text=True))
             assert set(result["imports"]) == expected, result
             assert result["scans"] == expected_scans, result
+            if expected_reads is not None:
+                assert result["reads"] == expected_reads, result
 
-        scan(2)
+        def age_changes():
+            # Metadata changed within the last second may still be followed by a
+            # same-tick edit, so the scanner only trusts older metadata.
+            time.sleep(1.1)
+
+        scan(2, expected_reads=2)
+        scan(0, expected_reads=2)
+        age_changes()
+        scan(0, expected_reads=2)
         initial_cache = cache.read_bytes()
         os.utime(cache, ns=(1_000_000_000, 1_000_000_000))
         initial_mtime = cache.stat().st_mtime_ns
-        scan(0)
+        # Unchanged metadata skips reading and hashing entirely.
+        scan(0, expected_reads=0)
         assert cache.read_bytes() == initial_cache
         assert cache.stat().st_mtime_ns == initial_mtime
 
-        # Equal byte counts and preserved timestamps must not hide import edits.
+        # A touch without content changes rehashes but does not rescan.
+        os.utime(lexical)
+        scan(0, expected_reads=1)
+
+        # Equal byte counts and preserved timestamps must not hide import edits;
+        # the change time still differs.
+        age_changes()
+        scan(0, expected_reads=1)
         metadata = first.stat()
         first.write_text(first.read_text().replace("Alpha", "Bravo"))
         os.utime(first, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
         assert first.stat().st_size == metadata.st_size
         assert first.stat().st_mtime_ns == metadata.st_mtime_ns
+        assert first.stat().st_ino == metadata.st_ino
         expected.remove("Alpha")
         expected.add("Bravo")
-        scan(1)
+        scan(1, expected_reads=1)
         scan(0)
 
         first.write_text(first.read_text().replace("{ 1 }", "{ 2 }"))

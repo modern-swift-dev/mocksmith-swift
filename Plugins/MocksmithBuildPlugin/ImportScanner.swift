@@ -15,7 +15,34 @@ private struct ImportCache: Codable, Equatable {
     struct Entry: Codable, Equatable {
         /// SHA-256 of the file's bytes; compared instead of the text itself.
         let digest: String
+        /// Observed before reading; `nil` when too recent to rule out a later edit in the same timestamp tick.
+        let metadata: FileMetadata?
         let modules: Set<String>
+    }
+
+    /// Any write changes the change time, and `utime` cannot restore it, so edits
+    /// that preserve size and modification time still invalidate.
+    struct FileMetadata: Codable, Equatable {
+        let size: Int64
+        let inode: UInt64
+        let modificationTime: Int64
+        let changeTime: Int64
+
+        init?(path: URL) {
+            var info = stat()
+            guard stat(path.path, &info) == 0 else {
+                return nil
+            }
+            #if canImport(Darwin)
+                let (modification, change) = (info.st_mtimespec, info.st_ctimespec)
+            #else
+                let (modification, change) = (info.st_mtim, info.st_ctim)
+            #endif
+            size = Int64(info.st_size)
+            inode = UInt64(info.st_ino)
+            modificationTime = Int64(modification.tv_sec) * 1_000_000_000 + Int64(modification.tv_nsec)
+            changeTime = Int64(change.tv_sec) * 1_000_000_000 + Int64(change.tv_nsec)
+        }
     }
 
     struct ExecutableIdentity: Codable, Equatable {
@@ -57,13 +84,17 @@ struct ImportScanner {
     private let executable: ImportCache.ExecutableIdentity?
     private let previous: ImportCache?
     private var files: [String: ImportCache.Entry] = [:]
+    /// Files changed after this instant may still be edited within their current
+    /// timestamp tick (up to 1 s on HFS+), so their metadata is not trusted.
+    private let trustedChangeTime: Int64
 
     init(cacheURL: URL) {
         self.cacheURL = cacheURL
+        trustedChangeTime = Int64((Date().timeIntervalSince1970 - 1) * 1_000_000_000)
         executable = ImportCache.ExecutableIdentity.current()
         if let data = try? Data(contentsOf: cacheURL),
            let cache = try? JSONDecoder().decode(ImportCache.self, from: data),
-           cache.version == 2, cache.executable == executable {
+           cache.version == 3, cache.executable == executable {
             previous = cache
         } else {
             previous = nil
@@ -74,22 +105,29 @@ struct ImportScanner {
         let expression = Self.importExpression
         var modules = Set<String>()
         for path in paths {
-            let data = try Data(contentsOf: path)
-            let digest = try Self.hexDigest(of: data, at: path)
+            let cached = previous?.files[path.path]
+            let metadata = ImportCache.FileMetadata(path: path)
             let entry: ImportCache.Entry
-            // Compare contents, not timestamps: edits with preserved metadata must invalidate.
-            if let cached = previous?.files[path.path], cached.digest == digest {
+            if let cached, let metadata, cached.metadata == metadata {
                 entry = cached
             } else {
-                let sourceCode = try sourceCodeOnly(Self.utf8Source(data, at: path))
-                let range = NSRange(sourceCode.startIndex..., in: sourceCode)
-                let imports = expression.matches(in: sourceCode, range: range).compactMap { match -> String? in
-                    guard let moduleRange = Range(match.range(at: 1), in: sourceCode) else {
-                        return nil
+                let data = try Data(contentsOf: path)
+                let digest = try Self.hexDigest(of: data, at: path)
+                let trustedMetadata = metadata.flatMap { $0.changeTime < trustedChangeTime ? $0 : nil }
+                // A touched file with unchanged contents keeps its imports without rescanning.
+                if let cached, cached.digest == digest {
+                    entry = ImportCache.Entry(digest: digest, metadata: trustedMetadata, modules: cached.modules)
+                } else {
+                    let sourceCode = try sourceCodeOnly(Self.utf8Source(data, at: path))
+                    let range = NSRange(sourceCode.startIndex..., in: sourceCode)
+                    let imports = expression.matches(in: sourceCode, range: range).compactMap { match -> String? in
+                        guard let moduleRange = Range(match.range(at: 1), in: sourceCode) else {
+                            return nil
+                        }
+                        return String(sourceCode[moduleRange])
                     }
-                    return String(sourceCode[moduleRange])
+                    entry = ImportCache.Entry(digest: digest, metadata: trustedMetadata, modules: Set(imports))
                 }
-                entry = ImportCache.Entry(digest: digest, modules: Set(imports))
             }
             files[path.path] = entry
             modules.formUnion(entry.modules)
@@ -101,7 +139,7 @@ struct ImportScanner {
         guard let executable else {
             return
         }
-        let cache = ImportCache(version: 2, executable: executable, files: files)
+        let cache = ImportCache(version: 3, executable: executable, files: files)
         guard cache != previous else {
             return
         }
