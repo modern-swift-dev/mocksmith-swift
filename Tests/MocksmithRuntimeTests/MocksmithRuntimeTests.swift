@@ -408,3 +408,22 @@ import Testing
         #expect(try member.invoke(value) == value)
     }
 }
+
+@Test func invocationRunsMatchersActionsAndAnswersOutsideMemberLock() throws {
+    let member = MockMember<Int, Void, Int>()
+    let transient = TransientMockMember<Int, Void, Int>()
+    member.addAction(
+        matching: { _ in member.invocationCount(matching: { _ in true }) > 0 },
+        outcomes: [.returning(0)],
+        action: { _ in member.record(-1) }
+    )
+    member.addStub(matching: { _ in member.invocationCount(matching: { _ in true }) > 0 }, specificity: 1, outcomes: [.answering { arguments, _ in
+        member.invocationCount(matching: { $0 == arguments })
+    }])
+    transient.addAction(matching: { _ in transient.invocationCount > 0 }, action: { _ in transient.record() })
+    transient.addStub(matching: { _ in transient.invocationCount > 0 }, outcomes: [.answering { _, _ in transient.invocationCount }])
+
+    #expect(try member.invoke(7) == 1)
+    #expect(member.invocationCount(matching: { $0 == -1 }) == 1)
+    #expect(try transient.invoke(7) == 2)
+}

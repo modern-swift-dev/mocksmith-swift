@@ -8,11 +8,17 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         var cancelled = false
     }
 
+    /// Index of the next outcome a stub returns; mutated only while holding `lock`.
+    private final class OutcomeCursor {
+        var next = 0
+    }
+
     private struct Stub {
         let id: UInt64
         let matches: (Arguments) -> Bool
         let specificity: Int
         var outcomes: [StubOutcome<Arguments, Ephemeral, Output>]
+        let cursor = OutcomeCursor()
     }
 
     private struct Action {
@@ -28,6 +34,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         let specificity: Int
         let outcomes: [StubOutcome<Arguments, Ephemeral, Output>]
         let body: (Arguments, borrowing Ephemeral) -> Void
+        let cursor = OutcomeCursor()
         var actionEnabled = true
         var stubEnabled = true
     }
@@ -44,7 +51,6 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     private var stubs: [Stub] = []
     private var actions: [Action] = []
     private var actionStubs: [ActionStub] = []
-    private var nextOutcome: [UInt64: Int] = [:]
     private var nextID: UInt64 = 0
     private var invocationGeneration: UInt64 = 0
     private var nextWaiterID: UInt64 = 0
@@ -184,12 +190,9 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     }
 
     public func record(_ arguments: Arguments) {
-        let sequence = nextMockInvocationSequence()
-        let waiters = lock.withLock { () -> [CheckedContinuation<Void, any Error>] in
-            appendInvocation(sequence: sequence, arguments: arguments)
-            invocationGeneration &+= 1
-            return drainInvocationWaiters()
-        }
+        lock.lock()
+        let waiters = recordInvocation(arguments)
+        lock.unlock()
         waiters.forEach { $0.resume() }
     }
 
@@ -269,7 +272,6 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
             }
             if scopes.contains(.stubs) {
                 stubs.removeAll()
-                nextOutcome.removeAll()
                 for index in actionStubs.indices {
                     actionStubs[index].stubEnabled = false
                 }
@@ -289,69 +291,54 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
 
     /// Records the invocation, runs the winning action, and returns the next outcome of the winning stub, if any.
     private func selectOutcome(for arguments: Arguments, ephemeral: borrowing Ephemeral) -> StubOutcome<Arguments, Ephemeral, Output>? {
-        let sequence = nextMockInvocationSequence()
-        let (snapshot, waiters) = lock.withLock { () -> (([Action], [Stub], [ActionStub]), [CheckedContinuation<Void, any Error>]) in
-            appendInvocation(sequence: sequence, arguments: arguments)
-            invocationGeneration &+= 1
-            return ((actions, stubs, actionStubs), drainInvocationWaiters())
-        }
+        // Matchers, actions, and answers are user code that may reenter this member, so only
+        // recording and snapshotting happen under the lock. Nothing in this section can throw.
+        lock.lock()
+        let waiters = recordInvocation(arguments)
+        let actions = actions
+        let stubs = stubs
+        let actionStubs = actionStubs
+        lock.unlock()
         waiters.forEach { $0.resume() }
 
-        let matchingActionStubs = snapshot.2.filter { $0.matches(arguments) }
-        let action = bestAction(in: snapshot.0, arguments: arguments)
-        let actionStub = bestActionStub(in: matchingActionStubs, forAction: true)
-        if let actionStub, action.map({ wins(actionStub.specificity, actionStub.id, over: $0.specificity, $0.id) }) ?? true {
-            actionStub.body(arguments, ephemeral)
-        } else {
-            action?.body(arguments, ephemeral)
+        // Winners are tracked by index so non-matching candidates are never copied out of the
+        // arrays. Each coupled matcher runs once and decides both its action and its stub side.
+        var actionStubAction: Int?
+        var actionStubOutcome: Int?
+        for index in 0 ..< actionStubs.count where actionStubs[index].matches(arguments) {
+            if actionStubs[index].actionEnabled, actionStubAction.map({ wins(actionStubs[index].specificity, actionStubs[index].id, over: actionStubs[$0].specificity, actionStubs[$0].id) }) ?? true {
+                actionStubAction = index
+            }
+            if actionStubs[index].stubEnabled, actionStubOutcome.map({ wins(actionStubs[index].specificity, actionStubs[index].id, over: actionStubs[$0].specificity, actionStubs[$0].id) }) ?? true {
+                actionStubOutcome = index
+            }
         }
 
-        let stub = bestStub(in: snapshot.1, arguments: arguments)
-        let actionStubOutcome = bestActionStub(in: matchingActionStubs, forAction: false)
-        if let actionStubOutcome,
-           stub.map({ wins(actionStubOutcome.specificity, actionStubOutcome.id, over: $0.specificity, $0.id) }) ?? true {
-            return consumeOutcome(id: actionStubOutcome.id, outcomes: actionStubOutcome.outcomes)
+        var action: Int?
+        for index in 0 ..< actions.count where actions[index].matches(arguments) {
+            if action.map({ wins(actions[index].specificity, actions[index].id, over: actions[$0].specificity, actions[$0].id) }) ?? true {
+                action = index
+            }
+        }
+        if let actionStubAction, action.map({ wins(actionStubs[actionStubAction].specificity, actionStubs[actionStubAction].id, over: actions[$0].specificity, actions[$0].id) }) ?? true {
+            actionStubs[actionStubAction].body(arguments, ephemeral)
+        } else if let action {
+            actions[action].body(arguments, ephemeral)
+        }
+
+        var stub: Int?
+        for index in 0 ..< stubs.count where stubs[index].matches(arguments) {
+            if stub.map({ wins(stubs[index].specificity, stubs[index].id, over: stubs[$0].specificity, stubs[$0].id) }) ?? true {
+                stub = index
+            }
+        }
+        if let actionStubOutcome, stub.map({ wins(actionStubs[actionStubOutcome].specificity, actionStubs[actionStubOutcome].id, over: stubs[$0].specificity, stubs[$0].id) }) ?? true {
+            return consumeOutcome(actionStubs[actionStubOutcome].outcomes, cursor: actionStubs[actionStubOutcome].cursor)
         }
         if let stub {
-            return consumeOutcome(id: stub.id, outcomes: stub.outcomes)
+            return consumeOutcome(stubs[stub].outcomes, cursor: stubs[stub].cursor)
         }
         return nil
-    }
-
-    private func bestAction(in candidates: [Action], arguments: Arguments) -> Action? {
-        candidates.reduce(nil) { winner, candidate in
-            guard candidate.matches(arguments) else {
-                return winner
-            }
-            guard let winner else {
-                return candidate
-            }
-            return wins(candidate.specificity, candidate.id, over: winner.specificity, winner.id) ? candidate : winner
-        }
-    }
-
-    private func bestStub(in candidates: [Stub], arguments: Arguments) -> Stub? {
-        candidates.reduce(nil) { winner, candidate in
-            guard candidate.matches(arguments) else {
-                return winner
-            }
-            guard let winner else {
-                return candidate
-            }
-            return wins(candidate.specificity, candidate.id, over: winner.specificity, winner.id) ? candidate : winner
-        }
-    }
-
-    private func bestActionStub(in candidates: [ActionStub], forAction: Bool) -> ActionStub? {
-        candidates.reduce(nil) { winner, candidate in
-            guard forAction ? candidate.actionEnabled : candidate.stubEnabled else {
-                return winner
-            }
-            guard let winner else {
-                return candidate
-            }
-            return wins(candidate.specificity, candidate.id, over: winner.specificity, winner.id) ? candidate : winner
-        }
     }
 
     private func wins(_ specificity: Int, _ id: UInt64, over otherSpecificity: Int, _ otherID: UInt64) -> Bool {
@@ -359,14 +346,14 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     }
 
     private func consumeOutcome(
-        id: UInt64,
-        outcomes: [StubOutcome<Arguments, Ephemeral, Output>]
+        _ outcomes: [StubOutcome<Arguments, Ephemeral, Output>],
+        cursor: OutcomeCursor
     ) -> StubOutcome<Arguments, Ephemeral, Output> {
-        lock.withLock {
-            let index = min(nextOutcome[id, default: 0], outcomes.count - 1)
-            nextOutcome[id] = index + 1
-            return outcomes[index]
-        }
+        lock.lock()
+        let index = min(cursor.next, outcomes.count - 1)
+        cursor.next = index + 1
+        lock.unlock()
+        return outcomes[index]
     }
 
     private func markVerified(_ sequences: [UInt64]) {
@@ -375,10 +362,14 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         }
     }
 
-    /// Must be called while holding `lock`.
-    private func appendInvocation(sequence: UInt64, arguments: Arguments) {
+    /// Must be called while holding `lock`. Assigning the sequence under the member lock keeps
+    /// `invocations` sorted by sequence. Returns the waiters to resume once the lock is released.
+    private func recordInvocation(_ arguments: Arguments) -> [CheckedContinuation<Void, any Error>] {
+        let sequence = nextMockInvocationSequence()
         invocationIndices[sequence] = invocations.count
         invocations.append(.init(sequence: sequence, arguments: arguments))
+        invocationGeneration &+= 1
+        return drainInvocationWaiters()
     }
 
     private func callHistorySnapshot() -> (generation: UInt64, arguments: [Arguments]) {
@@ -421,6 +412,10 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     }
 
     private func drainInvocationWaiters() -> [CheckedContinuation<Void, any Error>] {
+        // Called on every invocation; skip the generic collection work when nobody waits.
+        guard !invocationWaiters.isEmpty else {
+            return []
+        }
         let continuations = invocationWaiters.values.compactMap(\.continuation)
         invocationWaiters.removeAll()
         return continuations
