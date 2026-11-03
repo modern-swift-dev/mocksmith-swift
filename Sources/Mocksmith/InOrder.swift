@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 public struct _MocksmithInvocation: Sendable, Equatable {
     public let sequence: UInt64
@@ -11,15 +12,14 @@ public struct _MocksmithInvocation: Sendable, Equatable {
 }
 
 private enum InvocationSequence {
-    private static let lock = NSLock()
-    private nonisolated(unsafe) static var value: UInt64 = 0
+    private static let value = Atomic<UInt64>(0)
 
+    /// Relaxed ordering suffices: increments are totally ordered, so callers that hold a member lock
+    /// still receive ascending sequences for that member.
     static func next() -> UInt64 {
-        lock.withLock {
-            precondition(value < .max, "Mock invocation sequence exhausted")
-            value += 1
-            return value
-        }
+        let previous = value.wrappingAdd(1, ordering: .relaxed).oldValue
+        precondition(previous < .max, "Mock invocation sequence exhausted")
+        return previous + 1
     }
 }
 
