@@ -135,9 +135,11 @@ private struct SourceInput {
     let module: String
     let path: String
     let source: String
+    /// Computed from the bytes read from disk, so each file is read only once.
+    let digest: String
 
     var fingerprint: SourceFingerprint {
-        SourceFingerprint(module: module, path: path, digest: SHA256.hexDigest(of: source))
+        SourceFingerprint(module: module, path: path, digest: digest)
     }
 }
 
@@ -195,19 +197,25 @@ private struct SourceSnapshot: Codable, Equatable {
         var sources: [SourceInput] = []
         for module in modules.sorted(by: { $0.name < $1.name }) {
             for path in module.paths.sorted() {
-                let source: String
+                let data: Data
                 do {
-                    source = try String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8)
+                    data = try Data(contentsOf: URL(fileURLWithPath: path))
                 } catch {
                     throw GeneratorError.source(
                         .init(path: path, line: 1, column: 1),
                         "cannot read source: \(error.localizedDescription)"
                     )
                 }
+                guard let source = String(data: data, encoding: .utf8) else {
+                    throw GeneratorError.source(
+                        .init(path: path, line: 1, column: 1),
+                        "cannot read source: the file is not valid UTF-8"
+                    )
+                }
                 // Read every input in the relevant modules: a previously irrelevant
                 // file may gain a declaration, even with unchanged size and mtime.
                 if source.contains("Mockable") || source.contains("protocol") || source.contains("typealias") {
-                    sources.append(SourceInput(module: module.name, path: path, source: source))
+                    sources.append(SourceInput(module: module.name, path: path, source: source, digest: SHA256.hexDigest(of: data)))
                 }
             }
         }
