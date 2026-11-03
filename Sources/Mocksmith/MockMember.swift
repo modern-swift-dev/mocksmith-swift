@@ -229,7 +229,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         let configuration = configuration
         lock.unlock()
         waiters.forEach { $0.resume() }
-        return configuration.select(for: arguments, ephemeral: ephemeral)?.next(guardedBy: lock)
+        return configuration.select(for: arguments, ephemeral: ephemeral)?.next()
     }
 
     private func markVerified(_ sequences: [UInt64]) {

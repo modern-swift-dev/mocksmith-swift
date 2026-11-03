@@ -1,13 +1,14 @@
 import Foundation
+import Synchronization
 
 /// The stubs, actions, and coupled action stubs of one mock member, and how an invocation picks among them.
 ///
 /// Not thread-safe. Members mutate it while holding their lock and select from a copy taken under that
 /// lock, so matchers, actions, and the release of retired closures run outside the lock.
 struct MockConfiguration<Arguments: ~Copyable, Ephemeral: ~Copyable, Outcome> {
-    /// Index of the next outcome a stub returns; mutated only while holding the member lock.
+    /// Index of the next outcome a stub returns, shared by every configuration snapshot of the stub.
     final class OutcomeCursor {
-        var next = 0
+        let next = Atomic<Int>(0)
     }
 
     /// The outcomes of a winning stub and its position in them.
@@ -15,13 +16,19 @@ struct MockConfiguration<Arguments: ~Copyable, Ephemeral: ~Copyable, Outcome> {
         let outcomes: [Outcome]
         let cursor: OutcomeCursor
 
-        /// Returns the next outcome, repeating the last one once all were returned.
-        func next(guardedBy lock: NSLock) -> Outcome {
-            lock.lock()
-            let index = min(cursor.next, outcomes.count - 1)
-            cursor.next = index + 1
-            lock.unlock()
-            return outcomes[index]
+        /// Returns the next outcome, repeating the last one once all were returned. Lock-free: concurrent
+        /// callers each claim a distinct index, and the cursor stops at `outcomes.count` so outcomes
+        /// appended later are still returned in order.
+        func next() -> Outcome {
+            var index = cursor.next.load(ordering: .relaxed)
+            while index < outcomes.count {
+                let (claimed, current) = cursor.next.compareExchange(expected: index, desired: index + 1, ordering: .relaxed)
+                if claimed {
+                    return outcomes[index]
+                }
+                index = current
+            }
+            return outcomes[outcomes.count - 1]
         }
     }
 

@@ -190,7 +190,7 @@ public final class TransientMockMember<
         recordInvocation()
         let configuration = configuration
         lock.unlock()
-        return configuration.select(for: arguments, ephemeral: ephemeral)?.next(guardedBy: lock)
+        return configuration.select(for: arguments, ephemeral: ephemeral)?.next()
     }
 
     /// Must be called while holding `lock`. Assigning the sequence under the member lock keeps
