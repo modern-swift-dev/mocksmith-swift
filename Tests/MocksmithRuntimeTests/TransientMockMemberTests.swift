@@ -249,6 +249,25 @@ import Testing
     #expect(member.invocationCount == 100)
 }
 
+@Test func noncopyableTransientMemberRecordsConcurrentCallsInSequenceOrder() async throws {
+    struct Token: ~Copyable { let value: Int }
+    let member = TransientMockMember<Token, Void, Token>(name: "token")
+    member.addStub(matching: { $0.value >= 0 }, outcomes: [.producing { Token(value: 7) }])
+
+    try await withThrowingTaskGroup(of: Int.self) { group in
+        for value in 0 ..< 100 {
+            group.addTask { try member.invoke(Token(value: value)).value }
+        }
+        for try await result in group {
+            #expect(result == 7)
+        }
+    }
+    let sequences = member.orderedInvocations.map(\.sequence)
+    #expect(sequences.count == 100)
+    #expect(sequences == sequences.sorted())
+    #expect(member.verification(count: 100).success)
+}
+
 @Test func transientMemberSupportsConcurrentConfiguration() async throws {
     let member = TransientMockMember<Int, Void, Int>()
     await withTaskGroup(of: Void.self) { group in
