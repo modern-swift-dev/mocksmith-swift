@@ -202,3 +202,51 @@ private func pendingBuilder(_ member: MockMember<Int, Void, String>) -> PendingB
     await #expect(throws: PendingFailure.configured) { try await member.invokeAsync(2) }
     #expect(try await member.invokeAsync(3) == "resolved")
 }
+
+@Test func invocationCancelledBeforeSuspendingFailsButIsRecorded() async throws {
+    let member = MockMember<Int, Void, String>(name: "fetch(_:)")
+    let first = pendingBuilder(member).willSuspend(cancellation: .fail(with: .cancelled))
+    let second = first.thenSuspend()
+    let task = Task {
+        while !Task.isCancelled {
+            await Task.yield()
+        }
+        return try await member.invokeAsync(1)
+    }
+    task.cancel()
+
+    await #expect(throws: PendingFailure.cancelled) { try await task.value }
+    #expect(first.arguments == [1])
+
+    let next = Task { try await member.invokeAsync(2) }
+    try await second.waitUntilCalled(timeout: .seconds(1))
+    second.resume(returning: "second")
+    #expect(try await next.value == "second")
+}
+
+@Test func cancellingWaitUntilCalledRemovesTheWaiter() async throws {
+    let member = MockMember<Int, Void, String>(name: "fetch(_:)")
+    let pending = pendingBuilder(member).willSuspend()
+    let waiting = Task { try await pending.waitUntilCalled(timeout: .seconds(10)) }
+
+    await Task.yield()
+    waiting.cancel()
+    await #expect(throws: CancellationError.self) { try await waiting.value }
+
+    let task = Task { try await member.invokeAsync(1) }
+    try await pending.waitUntilCalled(timeout: .seconds(1))
+    pending.resume(returning: "resumed")
+    #expect(try await task.value == "resumed")
+}
+
+@Test func pendingHandlesResumeFromAnotherTask() async throws {
+    let member = MockMember<Int, Void, String>(name: "fetch(_:)")
+    let pending = pendingBuilder(member).willSuspend()
+    let task = Task { try await member.invokeAsync(1) }
+
+    try await Task.detached {
+        try await pending.waitUntilCalled(timeout: .seconds(1))
+        pending.resume(with: .success("detached"))
+    }.value
+    #expect(try await task.value == "detached")
+}

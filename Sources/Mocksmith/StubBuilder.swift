@@ -83,10 +83,12 @@ public struct _MocksmithAsyncReturnSequence<Arguments, Ephemeral, Output, Answer
     }
 }
 
-public struct _MocksmithPendingSequence<Arguments, Ephemeral, Output, Answer>: @unchecked Sendable {
+public struct _MocksmithPendingSequence<Arguments, Ephemeral, Output, Answer>: Sendable {
     private let pending: PendingCall<Arguments, Output, Never>
-    private let registration: _MocksmithStubRegistration<Arguments, Ephemeral, Output>
-    private let answerOutcome: (Answer) -> StubOutcome<Arguments, Ephemeral, Output>
+    // Sound: the registration only appends outcomes under its member's lock, and the answer mapping is a
+    // stateless generated conversion; neither shares unsynchronized state when the handle crosses tasks.
+    private nonisolated(unsafe) let registration: _MocksmithStubRegistration<Arguments, Ephemeral, Output>
+    private nonisolated(unsafe) let answerOutcome: (Answer) -> StubOutcome<Arguments, Ephemeral, Output>
     private let member: String
 
     public init(
@@ -259,10 +261,12 @@ public struct _MocksmithAsyncThrowingReturnSequence<Arguments, Ephemeral, Output
 }
 
 /// A sequence handle that forwards control operations to its pending call.
-public struct _MocksmithThrowingPendingSequence<Arguments, Ephemeral, Output, Failure: Error, Answer>: @unchecked Sendable {
+public struct _MocksmithThrowingPendingSequence<Arguments, Ephemeral, Output, Failure: Error, Answer>: Sendable {
     private let pending: PendingCall<Arguments, Output, Failure>
-    private let registration: _MocksmithStubRegistration<Arguments, Ephemeral, Output>
-    private let answerOutcome: (Answer) -> StubOutcome<Arguments, Ephemeral, Output>
+    // Sound: the registration only appends outcomes under its member's lock, and the answer mapping is a
+    // stateless generated conversion; neither shares unsynchronized state when the handle crosses tasks.
+    private nonisolated(unsafe) let registration: _MocksmithStubRegistration<Arguments, Ephemeral, Output>
+    private nonisolated(unsafe) let answerOutcome: (Answer) -> StubOutcome<Arguments, Ephemeral, Output>
     private let member: String
 
     public init(

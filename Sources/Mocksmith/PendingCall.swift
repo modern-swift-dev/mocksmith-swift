@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Controls how cancellation of a suspended mock invocation is handled.
 public enum PendingCancellationPolicy<Failure: Error> {
@@ -9,31 +10,20 @@ public enum PendingCancellationPolicy<Failure: Error> {
 }
 
 /// A FIFO controller for async mock invocations selected by `willSuspend`.
-public final class PendingCall<Arguments, Output, Failure: Error>: @unchecked Sendable {
-    private final class Invocation: @unchecked Sendable {
-        let id: UInt64
-        var continuation: CheckedContinuation<Output, any Error>?
-        var cancelled = false
-
-        init(id: UInt64) {
-            self.id = id
-        }
+public final class PendingCall<Arguments, Output, Failure: Error>: Sendable {
+    private struct State {
+        // Sound: the mutex guards every access; handing recorded arguments to the test that reads them
+        // is the mock's documented contract, so region checking is waived for these user values.
+        nonisolated(unsafe) var recordedArguments: [Arguments] = []
+        var pending: [(id: UInt64, continuation: CheckedContinuation<Output, any Error>)] = []
+        var generation: UInt64 = 0
+        var nextInvocationID: UInt64 = 0
+        var nextWaiterID: UInt64 = 0
+        var waiters: [UInt64: CheckedContinuation<Void, any Error>] = [:]
     }
 
-    private final class Waiter: @unchecked Sendable {
-        var id: UInt64?
-        var continuation: CheckedContinuation<Void, any Error>?
-        var cancelled = false
-    }
-
-    private let lock = NSLock()
+    private let state = Mutex(State())
     private let member: String
-    private var recordedArguments: [Arguments] = []
-    private var pending: [Invocation] = []
-    private var generation: UInt64 = 0
-    private var nextInvocationID: UInt64 = 0
-    private var nextWaiterID: UInt64 = 0
-    private var waiters: [UInt64: Waiter] = [:]
 
     public init(member: String = "member") {
         self.member = member
@@ -41,12 +31,12 @@ public final class PendingCall<Arguments, Output, Failure: Error>: @unchecked Se
 
     /// The number of invocations accepted by this pending outcome.
     public var callCount: Int {
-        lock.withLock { recordedArguments.count }
+        state.withLock { $0.recordedArguments.count }
     }
 
     /// Arguments for every accepted invocation, in invocation order.
     public var arguments: [Arguments] {
-        lock.withLock { recordedArguments }
+        state.withLock { $0.recordedArguments }
     }
 
     /// Waits until this pending outcome has accepted at least `count` invocations.
@@ -83,41 +73,35 @@ public final class PendingCall<Arguments, Output, Failure: Error>: @unchecked Se
     }
 
     func suspend(_ arguments: Arguments, cancellationFailure: Failure?) async throws -> Output {
-        let invocation = lock.withLock { () -> Invocation in
-            nextInvocationID &+= 1
-            return Invocation(id: nextInvocationID)
+        let id = state.withLock { state in
+            state.nextInvocationID &+= 1
+            return state.nextInvocationID
         }
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                let result: (failure: Failure?, waiters: [CheckedContinuation<Void, any Error>]) = lock.withLock {
-                    invocation.continuation = continuation
-                    let failure: Failure?
-                    if invocation.cancelled, let cancellationFailure {
-                        failure = cancellationFailure
-                    } else {
-                        pending.append(invocation)
-                        failure = nil
+                let (failure, waiters) = state.withLock { state in
+                    // Cancellation is flagged before `onCancel` runs, and both sides check under the
+                    // lock, so a cancelled invocation is either never queued or removed by `onCancel`.
+                    let failure = Task.isCancelled ? cancellationFailure : nil
+                    if failure == nil {
+                        state.pending.append((id, continuation))
                     }
-                    recordedArguments.append(arguments)
-                    generation &+= 1
-                    return (failure, drainWaiters())
+                    state.recordedArguments.append(arguments)
+                    state.generation &+= 1
+                    return (failure, Self.drainWaiters(&state))
                 }
-                if let failure = result.failure {
+                if let failure {
                     continuation.resume(throwing: failure)
                 }
-                result.waiters.forEach { $0.resume() }
+                waiters.forEach { $0.resume() }
             }
         } onCancel: {
             guard let cancellationFailure else {
                 return
             }
-            let continuation = lock.withLock { () -> CheckedContinuation<Output, any Error>? in
-                invocation.cancelled = true
-                guard let index = pending.firstIndex(where: { $0.id == invocation.id }) else {
-                    return nil
-                }
-                return pending.remove(at: index).continuation
+            let continuation = state.withLock { state in
+                state.pending.firstIndex { $0.id == id }.map { state.pending.remove(at: $0).continuation }
             }
             continuation?.resume(throwing: cancellationFailure)
         }
@@ -127,36 +111,40 @@ public final class PendingCall<Arguments, Output, Failure: Error>: @unchecked Se
         CallHistory(
             member: member,
             // Pending calls are never reset, so recorded arguments only grow.
-            snapshot: { [self] in lock.withLock { CallHistorySnapshot(generation: generation, resets: 0, arguments: recordedArguments) } },
+            snapshot: { [self] in
+                state.withLock { CallHistorySnapshot(generation: $0.generation, resets: 0, arguments: $0.recordedArguments) }
+            },
             matching: { _ in true },
             waitForChange: { [self] generation in try await waitForChange(after: generation) }
         )
     }
 
     private func removeOldestPending() -> CheckedContinuation<Output, any Error> {
-        lock.withLock {
-            guard !pending.isEmpty, let continuation = pending.removeFirst().continuation else {
+        state.withLock { state in
+            guard !state.pending.isEmpty else {
                 preconditionFailure("No pending invocation of \(member) to resume")
             }
-            return continuation
+            return state.pending.removeFirst().continuation
         }
     }
 
     private func waitForChange(after observedGeneration: UInt64) async throws {
-        let waiter = Waiter()
+        let id = state.withLock { state in
+            state.nextWaiterID &+= 1
+            return state.nextWaiterID
+        }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                let immediate: Result<Void, any Error>? = lock.withLock {
-                    if waiter.cancelled {
+                let immediate: Result<Void, any Error>? = state.withLock { state in
+                    // Cancellation is flagged before `onCancel` runs, and both sides check under the
+                    // lock, so a cancelled waiter is either never registered or removed by `onCancel`.
+                    if Task.isCancelled {
                         return .failure(CancellationError())
                     }
-                    guard generation == observedGeneration else {
+                    guard state.generation == observedGeneration else {
                         return .success(())
                     }
-                    nextWaiterID &+= 1
-                    waiter.id = nextWaiterID
-                    waiter.continuation = continuation
-                    waiters[nextWaiterID] = waiter
+                    state.waiters[id] = continuation
                     return nil
                 }
                 switch immediate {
@@ -166,20 +154,14 @@ public final class PendingCall<Arguments, Output, Failure: Error>: @unchecked Se
                 }
             }
         } onCancel: {
-            let continuation = lock.withLock { () -> CheckedContinuation<Void, any Error>? in
-                waiter.cancelled = true
-                guard let id = waiter.id, waiters.removeValue(forKey: id) != nil else {
-                    return nil
-                }
-                return waiter.continuation
-            }
+            let continuation = state.withLock { $0.waiters.removeValue(forKey: id) }
             continuation?.resume(throwing: CancellationError())
         }
     }
 
-    private func drainWaiters() -> [CheckedContinuation<Void, any Error>] {
-        let continuations = waiters.values.compactMap(\.continuation)
-        waiters.removeAll()
+    private static func drainWaiters(_ state: inout State) -> [CheckedContinuation<Void, any Error>] {
+        let continuations = Array(state.waiters.values)
+        state.waiters.removeAll()
         return continuations
     }
 }
