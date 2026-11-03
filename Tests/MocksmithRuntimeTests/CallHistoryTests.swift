@@ -1,3 +1,4 @@
+import Dispatch
 import Mocksmith
 import Testing
 
@@ -156,6 +157,19 @@ import Testing
 
     member.record(1)
     #expect(history.count == 1)
+}
+
+@Test func callHistoryIsReadFromADetachedTaskWhileRecording() async throws {
+    let member = MockMember<Int, Void, Void>(name: "save")
+    let history = member.callHistory { $0.isMultiple(of: 2) }
+    let waiting = Task.detached {
+        try await history.waitForCount(50, timeout: .seconds(5))
+        return history.arguments
+    }
+
+    DispatchQueue.concurrentPerform(iterations: 100) { member.record($0) }
+    #expect(try await waiting.value.count >= 50)
+    #expect(Set(history.arguments) == Set(stride(from: 0, to: 100, by: 2)))
 }
 
 @Test func callHistoryDoesNotMarkInvocationsVerified() {

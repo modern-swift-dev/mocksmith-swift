@@ -22,15 +22,17 @@ struct CallHistorySnapshot<Arguments> {
 }
 
 /// A typed, observational view of invocations recorded by one mock member.
-public struct CallHistory<Arguments>: @unchecked Sendable {
+public struct CallHistory<Arguments>: Sendable {
     private enum WaitResult: Sendable {
         case changed
         case timedOut
     }
 
     private let member: String
-    private let snapshot: () -> CallHistorySnapshot<Arguments>
-    private let matching: (Arguments) -> Bool
+    private let snapshot: @Sendable () -> CallHistorySnapshot<Arguments>
+    // Sound: like every mock matcher, this one may run on whichever thread uses the mock; the mock's
+    // documented contract leaves its thread safety to the test that supplies it.
+    private nonisolated(unsafe) let matching: (Arguments) -> Bool
     private let waitForChange: @Sendable (UInt64) async throws -> Void
 
     package var _mocksmithMemberName: String {
@@ -39,7 +41,7 @@ public struct CallHistory<Arguments>: @unchecked Sendable {
 
     init(
         member: String,
-        snapshot: @escaping () -> CallHistorySnapshot<Arguments>,
+        snapshot: @escaping @Sendable () -> CallHistorySnapshot<Arguments>,
         matching: @escaping (Arguments) -> Bool,
         waitForChange: @escaping @Sendable (UInt64) async throws -> Void
     ) {
