@@ -37,7 +37,7 @@ def main():
             mocks = case / "Mocks.swift"
             consumer = case / "Consumer.swift"
             unrelated = case / "Unrelated.swift"
-            generated = case / "Generated.swift"
+            generated = case / "Generated"
             sources = [mocks, consumer, unrelated]
             attribute = "@Mockable(.macro)" if mode == "macro" else "@Mockable"
             declarations = ["import Mocksmith"]
@@ -62,8 +62,17 @@ def main():
                 lines.extend(["return results", "}"])
                 consumer.write_text("\n".join(lines) + "\n")
 
+            def generate():
+                subprocess.run([
+                    str(generator), "--output-directory", str(generated),
+                    "--target-module", "Benchmark", "--module", "Benchmark", *map(str, sources),
+                ], cwd=root, check=True)
+
             write_consumer(0)
-            compilation_sources = sources + ([generated] if mode == "buildPlugin" else [])
+            if mode == "buildPlugin":
+                # The generator writes one file per source; list them for the compiler.
+                generate()
+            compilation_sources = sources + (sorted(generated.glob("*.generated.swift")) if mode == "buildPlugin" else [])
             output_map = {"": {"swift-dependencies": str(case / "master.swiftdeps")}}
             for source in compilation_sources:
                 output_map[str(source)] = {
@@ -84,10 +93,7 @@ def main():
 
             def compile_sources():
                 if mode == "buildPlugin":
-                    subprocess.run([
-                        str(generator), "--output", str(generated),
-                        "--target-module", "Benchmark", "--module", "Benchmark", *map(str, sources),
-                    ], cwd=root, check=True)
+                    generate()
                 subprocess.run(command, cwd=root, check=True)
 
             # Populate incremental build records before measuring edits.

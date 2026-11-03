@@ -118,7 +118,7 @@ func typedErrorName(_ type: TypeSyntax?) -> String? {
     return ["Error", "any Error", "any Swift.Error"].contains(type) ? nil : type
 }
 
-func stableIdentifier(_ text: String) -> String {
+package func stableIdentifier(_ text: String) -> String {
     var hash: UInt64 = 14_695_981_039_346_656_037
     for byte in text.utf8 {
         hash ^= UInt64(byte)

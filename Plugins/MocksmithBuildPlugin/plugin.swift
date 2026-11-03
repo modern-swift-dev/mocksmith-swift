@@ -42,9 +42,11 @@ import PackagePlugin
         let modules = selectedModules.values.sorted { ($0.moduleName, $0.id) < ($1.moduleName, $1.id) }
 
         let generatedDirectory = context.pluginWorkDirectoryURL.appending(component: "GeneratedSources")
-        let output = generatedDirectory.appending(component: "Mocksmith.generated.swift")
         let cache = context.pluginWorkDirectoryURL.appending(component: "generation.cache.json")
-        var arguments = ["--output", output.path, "--cache", cache.path, "--target-module", currentModule.moduleName]
+        var arguments = [
+            "--output-directory", generatedDirectory.path, "--cache", cache.path,
+            "--target-module", currentModule.moduleName
+        ]
         var inputFiles = [URL]()
         var seenFiles = Set<URL>()
 
@@ -92,8 +94,22 @@ import PackagePlugin
             executable: executable,
             arguments: arguments,
             inputFiles: inputFiles,
-            outputFiles: [output]
+            // The generator writes one file per target source, even one without mocks.
+            outputFiles: swiftSourceFiles(for: currentModule).map {
+                generatedDirectory.appending(component: generatedFileName(for: $0))
+            }
         )]
+    }
+
+    /// Must match `generatedFileName(for:)` in MocksmithGenerator: the source's
+    /// stem and the FNV-1a hash of its path, as `stableIdentifier` computes it.
+    private func generatedFileName(for source: URL) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in source.path.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return "\(source.deletingPathExtension().lastPathComponent).\(String(hash, radix: 16)).generated.swift"
     }
 
     private func swiftSourceFiles(for module: SourceModuleTarget) -> [URL] {

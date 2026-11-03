@@ -38,6 +38,10 @@ let package = Package(
 @Mockable protocol Service { func value() -> Int }
 func useGeneratedMock() -> ServiceMock { ServiceMock() }
 ''')
+        (package / "Sources/First/Other.swift").write_text('''import Mocksmith
+@Mockable protocol Other { func other() -> Int }
+func useOtherMock() -> OtherMock { OtherMock() }
+''')
         workspace = directory / "CacheFixture.xcworkspace"
         workspace.mkdir()
         (workspace / "contents.xcworkspacedata").write_text(
@@ -65,38 +69,53 @@ func useGeneratedMock() -> ServiceMock { ServiceMock() }
                 if json.loads(item.read_text()).get("projectName") == "MocksmithCacheFixture"
             }
 
+        def generated_files():
+            """Maps each generated file to its timestamp."""
+            return {item: item.stat().st_mtime_ns for item in derived_data.rglob("*.generated.swift")}
+
+        def generated_file(target, source):
+            return next(item for item in generated_files() if f"/{target}/" in str(item) and item.name.startswith(f"{source}."))
+
         build("Initial build")
         initial_keys = project_cache_keys()
         assert initial_keys, "Fixture PIF cache was not created"
-        generated = list(derived_data.rglob("Mocksmith.generated.swift"))
-        assert len(generated) == 2, generated
-        timestamps = {item: item.stat().st_mtime_ns for item in generated}
-        for item in generated:
-            assert item.parent.name == "GeneratedSources"
-            assert list(item.parent.iterdir()) == [item], "Private cache leaked into build outputs"
+        timestamps = generated_files()
+        assert len(timestamps) == 3, timestamps
+        for directory in {item.parent for item in timestamps}:
+            assert directory.name == "GeneratedSources"
+            assert all(item.name.endswith(".generated.swift") for item in directory.iterdir()), \
+                "Private cache leaked into build outputs"
         for attempt in range(3):
             build(f"Unchanged build {attempt + 1}")
             assert project_cache_keys() == initial_keys, "Unchanged plugin results invalidated the PIF cache"
-            assert all(item.stat().st_mtime_ns == timestamps[item] for item in generated)
+            assert generated_files() == timestamps
 
+        # Each source has its own generated file: editing one protocol rewrites
+        # only that file, leaving the target's other mocks untouched.
+        first = generated_file("First", "Service")
+        other = generated_file("First", "Other")
+        second = generated_file("Second", "Service")
+        other_source = other.read_bytes()
         service = package / "Sources/First/Service.swift"
         service.write_text(service.read_text().replace("-> Int", "-> String"))
         build("Protocol change")
-        first = next(item for item in generated if "/First/" in str(item))
-        second = next(item for item in generated if "/Second/" in str(item))
         assert "func value() -> String" in first.read_text()
         assert first.stat().st_mtime_ns != timestamps[first]
+        assert other.read_bytes() == other_source
+        assert other.stat().st_mtime_ns == timestamps[other]
         assert second.stat().st_mtime_ns == timestamps[second]
 
         added = package / "Sources/First/Added.swift"
         added.write_text("import Mocksmith\n@Mockable protocol Added {}\n")
         build("New protocol file")
-        assert "class AddedMock:" in first.read_text()
+        added_output = generated_file("First", "Added")
+        assert "class AddedMock:" in added_output.read_text()
         added.unlink()
         build("Removed protocol file")
-        assert "AddedMock" not in first.read_text()
+        assert not added_output.exists()
+        assert not any("AddedMock" in item.read_text() for item in generated_files())
 
-    print("Xcode cache reuse, isolated cache outputs, and protocol edit/add/remove checks passed.")
+    print("Xcode cache reuse, isolated cache outputs, per-file outputs, and protocol edit/add/remove checks passed.")
 
 
 if __name__ == "__main__":
