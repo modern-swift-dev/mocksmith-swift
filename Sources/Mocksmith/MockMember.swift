@@ -2,23 +2,24 @@ import Foundation
 import Synchronization
 
 /// Thread-safe runtime channel that records invocations and selects matching actions and stubs.
-public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable {
-    private final class InvocationWaiter: @unchecked Sendable {
-        var id: UInt64?
-        var continuation: CheckedContinuation<Void, any Error>?
-        var cancelled = false
+public final class MockMember<Arguments, Ephemeral, Output>: Sendable {
+    private struct State {
+        /// Recorded invocations as parallel arrays; sequences ascend because they are assigned under the lock.
+        var invocationSequences: [UInt64] = []
+        // Sound: the mutex guards every access; recording arguments on the invoking thread for the test
+        // that reads them is the mock's documented contract, so region checking is waived for them.
+        nonisolated(unsafe) var invocationArguments: [Arguments] = []
+        var verifiedSequences: Set<UInt64> = []
+        // Sound: the mutex guards every access; user matchers, actions, and outcomes are registered on
+        // one thread and run on invoking threads, which is the mock's documented contract.
+        nonisolated(unsafe) var configuration = MockConfiguration<Arguments, Ephemeral, StubOutcome<Arguments, Ephemeral, Output>>()
+        var invocationGeneration: UInt64 = 0
+        var invocationResets: UInt64 = 0
+        var nextWaiterID: UInt64 = 0
+        var invocationWaiters: [UInt64: CheckedContinuation<Void, any Error>] = [:]
     }
 
-    private let lock = Mutex(())
-    /// Recorded invocations as parallel arrays; sequences ascend because they are assigned under `lock`.
-    private var invocationSequences: [UInt64] = []
-    private var invocationArguments: [Arguments] = []
-    private var verifiedSequences: Set<UInt64> = []
-    private var configuration = MockConfiguration<Arguments, Ephemeral, StubOutcome<Arguments, Ephemeral, Output>>()
-    private var invocationGeneration: UInt64 = 0
-    private var invocationResets: UInt64 = 0
-    private var nextWaiterID: UInt64 = 0
-    private var invocationWaiters: [UInt64: InvocationWaiter] = [:]
+    private let state = Mutex(State())
     private let name: String
 
     public init(name: String = "member") {
@@ -31,9 +32,9 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         outcomes: [StubOutcome<Arguments, Ephemeral, Output>]
     ) -> _MocksmithStubRegistration<Arguments, Ephemeral, Output> {
         precondition(!outcomes.isEmpty, "Mock stubs need at least one outcome")
-        let id = lock.withLock { _ in configuration.addStub(matching: matching, specificity: specificity, outcomes: outcomes) }
+        let id = state.withLock { $0.configuration.addStub(matching: matching, specificity: specificity, outcomes: outcomes) }
         return _MocksmithStubRegistration { [self] outcomes in
-            lock.withLock { _ in configuration.appendOutcomes(outcomes, toStub: id) }
+            state.withLock { $0.configuration.appendOutcomes(outcomes, toStub: id) }
         }
     }
 
@@ -42,7 +43,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         specificity: Int = 0,
         action: @escaping (Arguments, borrowing Ephemeral) -> Void
     ) {
-        lock.withLock { _ in configuration.addAction(matching: matching, specificity: specificity, body: action) }
+        state.withLock { $0.configuration.addAction(matching: matching, specificity: specificity, body: action) }
     }
 
     public func addAction(
@@ -62,7 +63,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         action: @escaping (Arguments, borrowing Ephemeral) -> Void
     ) {
         precondition(!outcomes.isEmpty, "Mock stubs need at least one outcome")
-        lock.withLock { _ in configuration.addAction(matching: matching, specificity: specificity, outcomes: outcomes, body: action) }
+        state.withLock { $0.configuration.addAction(matching: matching, specificity: specificity, outcomes: outcomes, body: action) }
     }
 
     public func addAction(
@@ -131,7 +132,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     }
 
     public func record(_ arguments: Arguments) {
-        let waiters = lock.withLock { _ in recordInvocation(arguments) }
+        let waiters = state.withLock { recordInvocation(arguments, in: &$0) }
         waiters.forEach { $0.resume() }
     }
 
@@ -140,9 +141,12 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         CallHistory(
             member: name,
             snapshot: { [self] in
-                lock.withLock { _ in
-                    CallHistorySnapshot(generation: invocationGeneration, resets: invocationResets, arguments: invocationArguments)
+                // Assigned rather than returned from `withLock`, which would look up generic metadata.
+                var snapshot = CallHistorySnapshot<Arguments>(generation: 0, resets: 0, arguments: [])
+                state.withLock {
+                    snapshot = CallHistorySnapshot(generation: $0.invocationGeneration, resets: $0.invocationResets, arguments: $0.invocationArguments)
                 }
+                return snapshot
             },
             matching: matching,
             waitForChange: { [self] generation in
@@ -152,7 +156,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     }
 
     public func invocationCount(matching: @escaping (Arguments) -> Bool) -> Int {
-        let snapshot = lock.withLock { _ in invocationArguments }
+        let snapshot = state.withLock { $0.invocationArguments }
         return snapshot.reduce(into: 0) {
             if matching($1) {
                 $0 += 1
@@ -161,15 +165,15 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     }
 
     public var orderedInvocations: [_MocksmithInvocation] {
-        lock.withLock { _ in
-            invocationSequences.map { .init(sequence: $0, member: name) }
+        state.withLock { state in
+            state.invocationSequences.map { .init(sequence: $0, member: name) }
         }
     }
 
     public var _mocksmithUnverifiedInvocations: [_MocksmithInvocation] {
-        lock.withLock { _ in
-            invocationSequences.compactMap {
-                verifiedSequences.contains($0) ? nil : .init(sequence: $0, member: name)
+        state.withLock { state in
+            state.invocationSequences.compactMap {
+                state.verifiedSequences.contains($0) ? nil : .init(sequence: $0, member: name)
             }
         }
     }
@@ -182,12 +186,12 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         sequence: UInt64,
         matching: @escaping (Arguments) -> Bool
     ) -> Bool {
-        let arguments = lock.withLock { _ in invocationSequences.sortedIndex(of: sequence).map { invocationArguments[$0] } }
+        let arguments = state.withLock { state in state.invocationSequences.sortedIndex(of: sequence).map { state.invocationArguments[$0] } }
         return arguments.map(matching) ?? false
     }
 
     public func verification(matching: @escaping (Arguments) -> Bool, count: Count) -> VerificationResult {
-        let (sequences, arguments) = lock.withLock { _ in (invocationSequences, invocationArguments) }
+        let (sequences, arguments) = state.withLock { ($0.invocationSequences, $0.invocationArguments) }
         let matchingSequences = zip(sequences, arguments).compactMap { matching($1) ? $0 : nil }
         let actual = matchingSequences.count
         let success = count.matches(actual)
@@ -202,18 +206,18 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
 
     public func reset(_ scopes: [MockScope] = Array(MockScope.all)) {
         let scopes = Set(scopes)
-        let (retired, waiters) = lock.withLock { _ in
+        let (retired, waiters) = state.withLock { state in
             // User values and captured objects may reenter this member from deinit.
-            let retired = (invocationArguments, configuration)
+            let retired = (state.invocationArguments, state.configuration)
             if scopes.contains(.invocations) {
-                invocationSequences.removeAll()
-                invocationArguments.removeAll()
-                verifiedSequences.removeAll()
-                invocationGeneration &+= 1
-                invocationResets &+= 1
+                state.invocationSequences.removeAll()
+                state.invocationArguments.removeAll()
+                state.verifiedSequences.removeAll()
+                state.invocationGeneration &+= 1
+                state.invocationResets &+= 1
             }
-            configuration.reset(scopes)
-            return (retired, scopes.contains(.invocations) ? drainInvocationWaiters() : [])
+            state.configuration.reset(scopes)
+            return (retired, scopes.contains(.invocations) ? drainInvocationWaiters(in: &state) : [])
         }
         withExtendedLifetime(retired) {}
         waiters.forEach { $0.resume() }
@@ -225,45 +229,58 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         // recording and snapshotting happen under the lock. Assigning the snapshot rather than returning
         // it from `withLock` avoids generic metadata lookups on every call.
         var snapshot: MockConfiguration<Arguments, Ephemeral, StubOutcome<Arguments, Ephemeral, Output>>?
-        let waiters = lock.withLock { _ in
-            snapshot = configuration
-            return recordInvocation(arguments)
+        let waiters = state.withLock { state in
+            snapshot = state.configuration
+            return recordInvocation(arguments, in: &state)
         }
         waiters.forEach { $0.resume() }
         return snapshot?.select(for: arguments, ephemeral: ephemeral)?.next()
     }
 
     private func markVerified(_ sequences: [UInt64]) {
-        lock.withLock { _ in
-            verifiedSequences.formUnion(sequences.filter { invocationSequences.sortedIndex(of: $0) != nil })
+        state.withLock { state in
+            state.verifiedSequences.formUnion(sequences.filter { state.invocationSequences.sortedIndex(of: $0) != nil })
         }
     }
 
-    /// Must be called while holding `lock`. Assigning the sequence under the member lock keeps
-    /// `invocationSequences` sorted. Returns the waiters to resume once the lock is released.
-    private func recordInvocation(_ arguments: Arguments) -> [CheckedContinuation<Void, any Error>] {
+    /// Assigning the sequence under the member lock keeps `invocationSequences` sorted. Returns the
+    /// waiters to resume once the lock is released. An instance method rather than a `State` method,
+    /// because calling a method of the generic `State` looks up its metadata on every invocation.
+    private func recordInvocation(_ arguments: Arguments, in state: inout State) -> [CheckedContinuation<Void, any Error>] {
         let sequence = nextMockInvocationSequence()
-        invocationSequences.append(sequence)
-        invocationArguments.append(arguments)
-        invocationGeneration &+= 1
-        return drainInvocationWaiters()
+        state.invocationSequences.append(sequence)
+        state.invocationArguments.append(arguments)
+        state.invocationGeneration &+= 1
+        return drainInvocationWaiters(in: &state)
+    }
+
+    private func drainInvocationWaiters(in state: inout State) -> [CheckedContinuation<Void, any Error>] {
+        // Called on every invocation; skip the generic collection work when nobody waits.
+        guard !state.invocationWaiters.isEmpty else {
+            return []
+        }
+        let continuations = Array(state.invocationWaiters.values)
+        state.invocationWaiters.removeAll()
+        return continuations
     }
 
     private func waitForInvocationChange(after generation: UInt64) async throws {
-        let waiter = InvocationWaiter()
+        let id = state.withLock { state in
+            state.nextWaiterID &+= 1
+            return state.nextWaiterID
+        }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                let immediate: Result<Void, any Error>? = lock.withLock { _ in
-                    if waiter.cancelled {
+                let immediate: Result<Void, any Error>? = state.withLock { state in
+                    // Cancellation is flagged before `onCancel` runs, and both sides check under the
+                    // lock, so a cancelled waiter is either never registered or removed by `onCancel`.
+                    if Task.isCancelled {
                         return .failure(CancellationError())
                     }
-                    guard invocationGeneration == generation else {
+                    guard state.invocationGeneration == generation else {
                         return .success(())
                     }
-                    nextWaiterID &+= 1
-                    waiter.id = nextWaiterID
-                    waiter.continuation = continuation
-                    invocationWaiters[nextWaiterID] = waiter
+                    state.invocationWaiters[id] = continuation
                     return nil
                 }
                 switch immediate {
@@ -273,25 +290,9 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
                 }
             }
         } onCancel: {
-            let continuation = lock.withLock { _ -> CheckedContinuation<Void, any Error>? in
-                waiter.cancelled = true
-                guard let id = waiter.id, invocationWaiters.removeValue(forKey: id) != nil else {
-                    return nil
-                }
-                return waiter.continuation
-            }
+            let continuation = state.withLock { $0.invocationWaiters.removeValue(forKey: id) }
             continuation?.resume(throwing: CancellationError())
         }
-    }
-
-    private func drainInvocationWaiters() -> [CheckedContinuation<Void, any Error>] {
-        // Called on every invocation; skip the generic collection work when nobody waits.
-        guard !invocationWaiters.isEmpty else {
-            return []
-        }
-        let continuations = invocationWaiters.values.compactMap(\.continuation)
-        invocationWaiters.removeAll()
-        return continuations
     }
 }
 

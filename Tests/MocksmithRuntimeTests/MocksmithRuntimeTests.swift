@@ -459,3 +459,29 @@ import Testing
     }
     #expect(Set(values) == Set(0 ..< 200))
 }
+
+@Test func memberRecordsConcurrentInvocationsInSequenceOrder() async throws {
+    let member = MockMember<Int, Void, Int>(name: "load(_:)")
+    member.addStub(matching: { _ in true }, outcomes: [.answering { arguments, _ in arguments * 2 }])
+
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        for task in 0 ..< 8 {
+            group.addTask {
+                for value in task * 100 ..< (task + 1) * 100 {
+                    let output = try member.invoke(value)
+                    #expect(output == value * 2)
+                }
+            }
+            group.addTask {
+                member.addAction(matching: { $0 == task }, action: { _ in })
+            }
+        }
+        try await group.waitForAll()
+    }
+
+    let invocations = member.orderedInvocations
+    #expect(invocations.count == 800)
+    #expect(invocations.map(\.sequence) == invocations.map(\.sequence).sorted())
+    #expect(invocations.allSatisfy { member.matchesInvocation(sequence: $0.sequence, matching: { _ in true }) })
+    #expect(member.verification(matching: { $0 < 100 }, count: 100).success)
+}
