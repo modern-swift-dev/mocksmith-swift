@@ -15,27 +15,10 @@ public final class GenericMockRegistry: @unchecked Sendable {
         let unverifiedInvocations: () -> [_MocksmithInvocation]
     }
 
-    private struct TransientEntry {
-        // See StaticMockRegistry.TransientEntry for why this uses opaque ARC
-        // ownership instead of `AnyObject` storage.
-        let pointer: UnsafeMutableRawPointer
-        let type: ObjectIdentifier
-        let reset: ([MockScope]) -> Void
-        let invocations: () -> [_MocksmithInvocation]
-        let unverifiedInvocations: () -> [_MocksmithInvocation]
-        let release: () -> Void
-    }
-
     private let lock = NSLock()
     private var entries: [Key: Entry] = [:]
-    private var transientEntries: [Key: TransientEntry] = [:]
 
     public init() {}
-
-    deinit {
-        let releases = lock.withLock { Array(transientEntries.values.map(\.release)) }
-        releases.forEach { $0() }
-    }
 
     public func member<Arguments, Ephemeral, Output>(
         key: String,
@@ -52,7 +35,6 @@ public final class GenericMockRegistry: @unchecked Sendable {
     ) -> MockMember<Arguments, Ephemeral, Output> {
         let lookup = Key(key: key, types: typeIDs)
         let type = ObjectIdentifier(MockMember<Arguments, Ephemeral, Output>.self)
-        // A key is never in both dictionaries, so a hit needs one lookup under one lock.
         if let (value, existingType) = lock.withLock({ entries[lookup].map { ($0.value, $0.type) } }) {
             guard existingType == type else {
                 preconditionFailure("Generic mock member type changed for \(key)")
@@ -62,7 +44,6 @@ public final class GenericMockRegistry: @unchecked Sendable {
 
         let candidate = make()
         return lock.withLock {
-            precondition(transientEntries[lookup] == nil, "Generic mock member type changed for \(key)")
             if let existing = entries[lookup] {
                 guard existing.type == type else {
                     preconditionFailure("Generic mock member type changed for \(key)")
@@ -95,52 +76,44 @@ public final class GenericMockRegistry: @unchecked Sendable {
     ) -> TransientMockMember<Arguments, Ephemeral, Output> {
         let lookup = Key(key: key, types: typeIDs)
         let type = ObjectIdentifier(TransientMockMember<Arguments, Ephemeral, Output>.self)
-        // A key is never in both dictionaries, so a hit needs one lookup under one lock.
-        if let (pointer, existingType) = lock.withLock({ transientEntries[lookup].map { ($0.pointer, $0.type) } }) {
+        if let (value, existingType) = lock.withLock({ entries[lookup].map { ($0.value, $0.type) } }) {
             guard existingType == type else {
                 preconditionFailure("Generic mock member type changed for \(key)")
             }
-            return Unmanaged<TransientMockMember<Arguments, Ephemeral, Output>>.fromOpaque(pointer).takeUnretainedValue()
+            return unsafeDowncast(value, to: TransientMockMember<Arguments, Ephemeral, Output>.self)
         }
 
         let candidate = make()
         return lock.withLock {
-            precondition(entries[lookup] == nil, "Generic mock member type changed for \(key)")
-            if let existing = transientEntries[lookup] {
+            if let existing = entries[lookup] {
                 guard existing.type == type else {
                     preconditionFailure("Generic mock member type changed for \(key)")
                 }
-                return Unmanaged<TransientMockMember<Arguments, Ephemeral, Output>>.fromOpaque(existing.pointer).takeUnretainedValue()
+                return unsafeDowncast(existing.value, to: TransientMockMember<Arguments, Ephemeral, Output>.self)
             }
-            let retained = Unmanaged.passRetained(candidate)
-            transientEntries[lookup] = TransientEntry(
-                pointer: retained.toOpaque(),
+            entries[lookup] = Entry(
+                value: candidate,
                 type: type,
                 reset: candidate.reset,
                 invocations: { candidate.orderedInvocations },
-                unverifiedInvocations: { candidate._mocksmithUnverifiedInvocations },
-                release: retained.release
+                unverifiedInvocations: { candidate._mocksmithUnverifiedInvocations }
             )
             return candidate
         }
     }
 
     public func reset(_ scopes: [MockScope] = Array(MockScope.all)) {
-        let resets = lock.withLock { entries.values.map(\.reset) + transientEntries.values.map(\.reset) }
+        let resets = lock.withLock { entries.values.map(\.reset) }
         resets.forEach { $0(scopes) }
     }
 
     public var orderedInvocations: [_MocksmithInvocation] {
-        let snapshots = lock.withLock {
-            entries.values.map(\.invocations) + transientEntries.values.map(\.invocations)
-        }
+        let snapshots = lock.withLock { entries.values.map(\.invocations) }
         return snapshots.flatMap { $0() }
     }
 
     public var unverifiedInvocations: [_MocksmithInvocation] {
-        let snapshots = lock.withLock {
-            entries.values.map(\.unverifiedInvocations) + transientEntries.values.map(\.unverifiedInvocations)
-        }
+        let snapshots = lock.withLock { entries.values.map(\.unverifiedInvocations) }
         return snapshots.flatMap { $0() }
     }
 }
