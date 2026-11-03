@@ -19,7 +19,7 @@ def main():
 import PackageDescription
 let package = Package(
     name: "MocksmithCacheFixture",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v15)],
     products: [.library(name: "Fixture", targets: ["First", "Second"])],
     dependencies: [.package(path: {json.dumps(str(root))})],
     targets: ["First", "Second"].map {{ name in

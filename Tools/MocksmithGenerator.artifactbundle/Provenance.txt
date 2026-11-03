@@ -1,9 +1,9 @@
 MocksmithGenerator macOS artifact
 Source: https://github.com/modern-swift-dev/mocksmith-swift
 Recipe: Scripts/build-generator-artifact.sh
-Configuration: Release; arm64 + x86_64; minimum macOS 13.0
+Configuration: Release; arm64 + x86_64; minimum macOS 15.0
 Signing: ad hoc, no timestamp
-Source revision: 9b9e479d540a2018a53b4dee12ca59765ef18a45
+Source revision: 1c94ad1cd1837951e7dd850ea6494d018d9a8b8c
 Sources.sha256 identifies the exact build inputs, including uncommitted edits.
 SwiftSyntax revision: 79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1
 SwiftSyntax source: https://github.com/swiftlang/swift-syntax

@@ -58,7 +58,7 @@ for architecture in arm64 x86_64; do
         --build-system native
         --configuration release
         --product MocksmithGenerator
-        --triple "$architecture-apple-macosx13.0"
+        --triple "$architecture-apple-macosx15.0"
         --sdk "$sdk_path"
         --force-resolved-versions
         --disable-experimental-prebuilts
@@ -114,7 +114,7 @@ fi
     echo "MocksmithGenerator macOS artifact"
     echo "Source: https://github.com/modern-swift-dev/mocksmith-swift"
     echo "Recipe: Scripts/build-generator-artifact.sh"
-    echo "Configuration: Release; arm64 + x86_64; minimum macOS 13.0"
+    echo "Configuration: Release; arm64 + x86_64; minimum macOS 15.0"
     echo "Signing: ad hoc, no timestamp"
     echo "Source revision: $(git -C "$repo_root" rev-parse HEAD)"
     echo "Sources.sha256 identifies the exact build inputs, including uncommitted edits."

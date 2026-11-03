@@ -52,7 +52,7 @@ Incremental builds cache import discovery during plugin setup and compare declar
 
 On macOS, the plugin runs the bundled universal generator as a prebuild command. This avoids an Xcode issue that hashes per-target build commands in dictionary order, invalidating the build description even when no inputs changed. Only generated Swift files go into the prebuild output directory; import and generation caches stay outside it. Other hosts build the generator from source and use a regular build command.
 
-The package supports Swift 6.3 on Linux and iOS 17, macOS 13, tvOS 17, and watchOS 10 or newer.
+The package supports Swift 6.3 on Linux and iOS 18, macOS 15, tvOS 18, and watchOS 11 or newer.
 
 ## Documentation
 

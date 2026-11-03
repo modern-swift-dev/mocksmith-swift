@@ -97,7 +97,7 @@ Platform support
 
 Apple platforms
 
-iOS 17, macOS 13, tvOS 17, and watchOS 10 or newer
+iOS 18, macOS 15, tvOS 18, and watchOS 11 or newer
 
 Linux
 

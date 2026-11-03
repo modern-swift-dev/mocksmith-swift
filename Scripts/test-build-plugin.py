@@ -30,7 +30,7 @@ def main():
 import PackageDescription
 let package = Package(
     name: "PluginFixture",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v15)],
     dependencies: [.package(path: {json.dumps(str(root))}), .package(path: "../External")],
     targets: [
         .target(

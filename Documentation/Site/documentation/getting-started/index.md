@@ -25,7 +25,7 @@ On this page
 
 ## Requirements
 
-Use Swift 6.3 or newer. Mocksmith supports Linux, iOS 17, macOS 13, tvOS 17, and watchOS 10 or newer.
+Use Swift 6.3 or newer. Mocksmith supports Linux, iOS 18, macOS 15, tvOS 18, and watchOS 11 or newer.
 
 ## Installation
 

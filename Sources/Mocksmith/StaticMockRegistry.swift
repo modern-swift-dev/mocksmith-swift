@@ -18,7 +18,8 @@ public final class StaticMockRegistry: @unchecked Sendable {
 
     private struct TransientEntry {
         // `Any`/`AnyObject` erasure of a class specialized with noncopyable
-        // arguments requires a newer runtime than the package's iOS 17 floor.
+        // arguments needed a newer runtime than the former iOS 17 floor; the
+        // iOS 18 floor permits it, but this storage has not been migrated.
         let pointer: UnsafeMutableRawPointer
         let type: ObjectIdentifier
         let reset: ([MockScope]) -> Void
