@@ -56,10 +56,10 @@ protocol Parent {
             subprocess.run(command, cwd=root, check=True)
             return output.read_text()
 
-        def parsed_paths():
+        def parsed_paths(arguments=None):
             """Runs the generator and returns the sources it parsed."""
             result = subprocess.run(
-                command, cwd=root, check=True, text=True, capture_output=True,
+                arguments or command, cwd=root, check=True, text=True, capture_output=True,
                 env={**os.environ, "MOCKSMITH_GENERATOR_TRACE_PARSING": "1"},
             )
             prefix = "MocksmithGenerator: parsed "
@@ -195,6 +195,35 @@ import Dependency
         parent.write_text(parent.read_text() + "\n")
         assert str(declarations) in parsed_paths()
         assert output.read_text() == inherited
+
+        # A cache miss parses only the dependency files that inherited-protocol
+        # resolution needs, not every file that declares some protocol.
+        lazy = directory / "Lazy"
+        lazy.mkdir()
+        lazy_child = lazy / "Child.swift"
+        lazy_child.write_text("import Mocksmith\nimport LazyDependency\n@Mockable protocol LazyChild: LazyParent {}\n")
+        lazy_local = lazy / "Local.swift"
+        lazy_local.write_text("protocol LocalUnrelated {}\n")
+        lazy_parent = lazy / "LazyParent.swift"
+        lazy_parent.write_text("public protocol LazyParent: LazyGrandparent { func parent() }\n")
+        lazy_grandparent = lazy / "LazyGrandparent.swift"
+        # A comment hides the declared name from the lexical index, so the file is
+        # parsed regardless of the name being resolved.
+        lazy_grandparent.write_text("public protocol /* opaque */ LazyGrandparent { func grandparent() }\n")
+        lazy_unrelated = []
+        for index in range(3):
+            lazy_unrelated.append(lazy / f"Unrelated{index}.swift")
+            lazy_unrelated[-1].write_text(f"public protocol Unrelated{index} {{}}\npublic typealias Alias{index} = Unrelated{index}\n")
+        lazy_output = lazy / "Generated.swift"
+        lazy_command = [
+            str(generator), "--output", str(lazy_output), "--target-module", "LazyFixture",
+            "--module", "LazyFixture", str(lazy_child), str(lazy_local),
+            "--module", "LazyDependency", str(lazy_parent), str(lazy_grandparent),
+            *map(str, lazy_unrelated),
+        ]
+        assert sorted(parsed_paths(lazy_command)) == sorted(map(str, [lazy_child, lazy_parent, lazy_grandparent]))
+        assert "func parent()" in lazy_output.read_text()
+        assert "func grandparent()" in lazy_output.read_text()
 
         # Files that were absent from the snapshot must still be read each run.
         unrelated.write_text("@Mockable protocol AddedService {}\n")

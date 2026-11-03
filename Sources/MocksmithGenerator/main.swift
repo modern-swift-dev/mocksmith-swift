@@ -366,6 +366,11 @@ private final class Scanner {
     let usesDependencySources: Bool
     private var protocols: [DeclarationID: [ProtocolRecord]] = [:]
     private var aliases: [DeclarationID: [AliasRecord]] = [:]
+    /// Sources not parsed yet, by module; resolution parses them on demand.
+    private var unparsedSources: [String: [SourceInput]] = [:]
+    /// Unparsed sources by module and by a name they may declare.
+    private var declarationIndex: [String: [String: [SourceInput]]] = [:]
+    private var loadedSources = Set<SourceKey>()
 
     /// Parses only the target module's candidates. Call `loadRemainingSources`
     /// before rendering when `usesDependencySources` is true.
@@ -380,16 +385,46 @@ private final class Scanner {
         register(targetCandidates)
     }
 
-    /// Parses every protocol or typealias source not already loaded as a candidate.
+    /// Makes every source not already loaded as a candidate available to
+    /// inherited-protocol resolution, which parses only the files it needs.
     func loadRemainingSources(from snapshot: SourceSnapshot) {
-        let loaded = Set(units.map { SourceKey(module: $0.module, path: $0.path) })
-        register(Self.parse(snapshot.contents.filter { !loaded.contains(SourceKey(module: $0.module, path: $0.path)) }))
+        for input in snapshot.contents where !loadedSources.contains(SourceKey(module: input.module, path: input.path)) {
+            unparsedSources[input.module, default: []].append(input)
+        }
+    }
+
+    /// Parses the sources of `module` that may declare `name`. The module's
+    /// sources are indexed lexically on first use; files whose declarations
+    /// cannot be read that way are parsed immediately.
+    private func loadDeclarations(named name: String, in module: String) {
+        if let sources = unparsedSources.removeValue(forKey: module) {
+            var index: [String: [SourceInput]] = [:]
+            var unindexed: [SourceInput] = []
+            for input in sources {
+                guard let names = declaredNames(in: input.source) else {
+                    unindexed.append(input)
+                    continue
+                }
+                for name in names {
+                    index[name, default: []].append(input)
+                }
+            }
+            declarationIndex[module] = index
+            register(Self.parse(unindexed))
+        }
+        guard let sources = declarationIndex[module]?.removeValue(forKey: name) else {
+            return
+        }
+        register(Self.parse(sources.filter {
+            !loadedSources.contains(SourceKey(module: $0.module, path: $0.path))
+        }))
     }
 
     private func register(_ parsed: [SourceUnit]) {
         for unit in parsed {
             let unitIndex = units.count
             units.append(unit)
+            loadedSources.insert(SourceKey(module: unit.module, path: unit.path))
             for item in unit.tree.statements {
                 if let declaration = item.item.as(ProtocolDeclSyntax.self) {
                     let record = ProtocolRecord(
@@ -463,6 +498,7 @@ private final class Scanner {
         var preparedMocks: [PreparedMock] = []
         var importTexts = Set(["import Mocksmith"])
         for root in roots {
+            loadDeclarations(named: root.id.name, in: root.id.module)
             if protocols[root.id]?.count != 1 {
                 throw sourceError(at: root, "ambiguous top-level protocol '\(root.id.name)' in module '\(root.id.module)'")
             }
@@ -621,16 +657,21 @@ private final class Scanner {
                     "inherited protocol '\(module).\(reference.name)' has no readable source available; binary, SDK, and precompiled modules are unsupported"
                 )
             }
+            loadDeclarations(named: reference.name, in: module)
             return try resolvedDeclaration(.init(module: module, name: reference.name), referencedFrom: unit)
         }
 
         let local = DeclarationID(module: units[unit].module, name: reference.name)
+        loadDeclarations(named: reference.name, in: local.module)
         if protocols[local] != nil || aliases[local] != nil {
             return try resolvedDeclaration(local, referencedFrom: unit)
         }
 
-        let candidates = units[unit].importedModules
-            .filter(availableSourceModules.contains)
+        let importedModules = units[unit].importedModules.filter(availableSourceModules.contains)
+        for module in importedModules {
+            loadDeclarations(named: reference.name, in: module)
+        }
+        let candidates = importedModules
             .map { DeclarationID(module: $0, name: reference.name) }
             .filter { protocols[$0] != nil || aliases[$0] != nil }
             .sorted { $0.description < $1.description }
@@ -855,6 +896,79 @@ private func validateBuildPluginDeclarations(_ units: [SourceUnit]) throws {
             )
         }
     }
+}
+
+/// Names that follow a `protocol` or `typealias` keyword anywhere in `source`,
+/// a superset of its top-level protocol and alias declarations found without
+/// parsing. Returns nil when a comment follows a keyword, since the declared
+/// name cannot then be read lexically.
+private func declaredNames(in source: String) -> Set<String>? {
+    var source = source
+    return source.withUTF8 { bytes -> Set<String>? in
+        var names = Set<String>()
+        for keyword in ["protocol", "typealias"] {
+            let keyword = Array(keyword.utf8)
+            var index = 0
+            while let start = firstIndex(of: keyword, in: bytes, from: index) {
+                index = start + keyword.count
+                if start > 0, isIdentifierByte(bytes[start - 1]) {
+                    continue
+                }
+                var position = index
+                while position < bytes.count, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[position]) {
+                    position += 1
+                }
+                guard position < bytes.count else {
+                    continue
+                }
+                if bytes[position] == UInt8(ascii: "/") {
+                    return nil
+                }
+                // Other text right after the keyword makes it part of a longer token.
+                guard position > index else {
+                    continue
+                }
+                let isEscaped = bytes[position] == UInt8(ascii: "`")
+                let nameStart = isEscaped ? position + 1 : position
+                var nameEnd = nameStart
+                while nameEnd < bytes.count, isIdentifierByte(bytes[nameEnd]) {
+                    nameEnd += 1
+                }
+                guard nameEnd > nameStart else {
+                    continue
+                }
+                // Identifier runs start and end next to ASCII bytes, so they always decode.
+                guard let name = String(bytes: UnsafeBufferPointer(rebasing: bytes[nameStart ..< nameEnd]), encoding: .utf8) else {
+                    return nil
+                }
+                names.insert(name)
+                if isEscaped {
+                    names.insert("`\(name)`")
+                }
+            }
+        }
+        return names
+    }
+}
+
+private func isIdentifierByte(_ byte: UInt8) -> Bool {
+    byte >= 0x80 || byte == UInt8(ascii: "_")
+        || (UInt8(ascii: "a") ... UInt8(ascii: "z")).contains(byte)
+        || (UInt8(ascii: "A") ... UInt8(ascii: "Z")).contains(byte)
+        || (UInt8(ascii: "0") ... UInt8(ascii: "9")).contains(byte)
+}
+
+private func firstIndex(of needle: [UInt8], in bytes: UnsafeBufferPointer<UInt8>, from start: Int) -> Int? {
+    guard start < bytes.count, let base = bytes.baseAddress else {
+        return nil
+    }
+    let found = needle.withUnsafeBufferPointer { needle -> UnsafeMutableRawPointer? in
+        guard let needleBase = needle.baseAddress else {
+            return nil
+        }
+        return memmem(base + start, bytes.count - start, needleBase, needle.count)
+    }
+    return found.map { UnsafeRawPointer(base).distance(to: UnsafeRawPointer($0)) }
 }
 
 private func requiresDependencySources(_ unit: SourceUnit) -> Bool {
