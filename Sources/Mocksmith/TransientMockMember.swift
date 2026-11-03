@@ -38,8 +38,8 @@ public final class TransientMockMember<
     }
 
     private let lock = NSLock()
+    /// Recorded sequences in ascending order; they are assigned under `lock`.
     private var invocations: [UInt64] = []
-    private var recordedSequences: Set<UInt64> = []
     private var verifiedSequences: Set<UInt64> = []
     private var stubs: [Stub] = []
     private var actions: [Action] = []
@@ -206,7 +206,7 @@ public final class TransientMockMember<
     }
 
     public func matchesInvocation(sequence: UInt64) -> Bool {
-        lock.withLock { recordedSequences.contains(sequence) }
+        lock.withLock { invocations.sortedIndex(of: sequence) != nil }
     }
 
     public func verification(count: Count) -> VerificationResult {
@@ -228,7 +228,6 @@ public final class TransientMockMember<
             let retired = (stubs, actions, actionStubs)
             if scopes.contains(.invocations) {
                 invocations.removeAll()
-                recordedSequences.removeAll()
                 verifiedSequences.removeAll()
             }
             if scopes.contains(.stubs) {
@@ -322,13 +321,12 @@ public final class TransientMockMember<
     /// `invocations` sorted by sequence.
     private func recordInvocation() {
         let sequence = nextMockInvocationSequence()
-        recordedSequences.insert(sequence)
         invocations.append(sequence)
     }
 
     private func markVerified(_ sequences: [UInt64]) {
         lock.withLock {
-            verifiedSequences.formUnion(sequences.filter(recordedSequences.contains))
+            verifiedSequences.formUnion(sequences.filter { invocations.sortedIndex(of: $0) != nil })
         }
     }
 }

@@ -427,3 +427,35 @@ import Testing
     #expect(member.invocationCount(matching: { $0 == -1 }) == 1)
     #expect(try transient.invoke(7) == 2)
 }
+
+@Test func concurrentRecordingKeepsSequencesOrderedAndLookupsExact() async {
+    let member = MockMember<Int, Void, Void>(name: "save")
+    let transient = TransientMockMember<Int, Void, Void>(name: "send")
+    await withTaskGroup(of: Void.self) { group in
+        for value in 0 ..< 200 {
+            group.addTask {
+                member.record(value)
+                transient.record()
+            }
+        }
+    }
+
+    for invocations in [member.orderedInvocations, transient.orderedInvocations] {
+        #expect(invocations.count == 200)
+        #expect(zip(invocations, invocations.dropFirst()).allSatisfy { $0.sequence < $1.sequence })
+    }
+    for invocation in member.orderedInvocations {
+        #expect(member.matchesInvocation(sequence: invocation.sequence, matching: { _ in true }))
+        #expect(!member.matchesInvocation(sequence: invocation.sequence + 1_000_000, matching: { _ in true }))
+    }
+    for invocation in transient.orderedInvocations {
+        #expect(transient.matchesInvocation(sequence: invocation.sequence))
+    }
+    #expect(!transient.matchesInvocation(sequence: 0))
+
+    let sequences = member.orderedInvocations.map(\.sequence)
+    let values = sequences.compactMap { sequence in
+        (0 ..< 200).first { value in member.matchesInvocation(sequence: sequence, matching: { $0 == value }) }
+    }
+    #expect(Set(values) == Set(0 ..< 200))
+}

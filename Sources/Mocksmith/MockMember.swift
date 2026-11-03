@@ -40,13 +40,9 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     }
 
     private let lock = NSLock()
-    private struct Invocation {
-        let sequence: UInt64
-        let arguments: Arguments
-    }
-
-    private var invocations: [Invocation] = []
-    private var invocationIndices: [UInt64: Int] = [:]
+    /// Recorded invocations as parallel arrays; sequences ascend because they are assigned under `lock`.
+    private var invocationSequences: [UInt64] = []
+    private var invocationArguments: [Arguments] = []
     private var verifiedSequences: Set<UInt64> = []
     private var stubs: [Stub] = []
     private var actions: [Action] = []
@@ -211,9 +207,9 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     }
 
     public func invocationCount(matching: @escaping (Arguments) -> Bool) -> Int {
-        let snapshot = lock.withLock { invocations }
+        let snapshot = lock.withLock { invocationArguments }
         return snapshot.reduce(into: 0) {
-            if matching($1.arguments) {
+            if matching($1) {
                 $0 += 1
             }
         }
@@ -221,14 +217,14 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
 
     public var orderedInvocations: [_MocksmithInvocation] {
         lock.withLock {
-            invocations.map { .init(sequence: $0.sequence, member: name) }
+            invocationSequences.map { .init(sequence: $0, member: name) }
         }
     }
 
     public var _mocksmithUnverifiedInvocations: [_MocksmithInvocation] {
         lock.withLock {
-            invocations.compactMap {
-                verifiedSequences.contains($0.sequence) ? nil : .init(sequence: $0.sequence, member: name)
+            invocationSequences.compactMap {
+                verifiedSequences.contains($0) ? nil : .init(sequence: $0, member: name)
             }
         }
     }
@@ -241,13 +237,13 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         sequence: UInt64,
         matching: @escaping (Arguments) -> Bool
     ) -> Bool {
-        let invocation = lock.withLock { invocationIndices[sequence].map { invocations[$0] } }
-        return invocation.map { matching($0.arguments) } ?? false
+        let arguments = lock.withLock { invocationSequences.sortedIndex(of: sequence).map { invocationArguments[$0] } }
+        return arguments.map(matching) ?? false
     }
 
     public func verification(matching: @escaping (Arguments) -> Bool, count: Count) -> VerificationResult {
-        let snapshot = lock.withLock { invocations }
-        let matchingSequences = snapshot.compactMap { matching($0.arguments) ? $0.sequence : nil }
+        let (sequences, arguments) = lock.withLock { (invocationSequences, invocationArguments) }
+        let matchingSequences = zip(sequences, arguments).compactMap { matching($1) ? $0 : nil }
         let actual = matchingSequences.count
         let success = count.matches(actual)
         if success {
@@ -263,10 +259,10 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         let scopes = Set(scopes)
         let (retired, waiters) = lock.withLock {
             // User values and captured objects may reenter this member from deinit.
-            let retired = (invocations, stubs, actions, actionStubs)
+            let retired = (invocationArguments, stubs, actions, actionStubs)
             if scopes.contains(.invocations) {
-                invocations.removeAll()
-                invocationIndices.removeAll()
+                invocationSequences.removeAll()
+                invocationArguments.removeAll()
                 verifiedSequences.removeAll()
                 invocationGeneration &+= 1
             }
@@ -358,22 +354,22 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
 
     private func markVerified(_ sequences: [UInt64]) {
         lock.withLock {
-            verifiedSequences.formUnion(sequences.filter { invocationIndices[$0] != nil })
+            verifiedSequences.formUnion(sequences.filter { invocationSequences.sortedIndex(of: $0) != nil })
         }
     }
 
     /// Must be called while holding `lock`. Assigning the sequence under the member lock keeps
-    /// `invocations` sorted by sequence. Returns the waiters to resume once the lock is released.
+    /// `invocationSequences` sorted. Returns the waiters to resume once the lock is released.
     private func recordInvocation(_ arguments: Arguments) -> [CheckedContinuation<Void, any Error>] {
         let sequence = nextMockInvocationSequence()
-        invocationIndices[sequence] = invocations.count
-        invocations.append(.init(sequence: sequence, arguments: arguments))
+        invocationSequences.append(sequence)
+        invocationArguments.append(arguments)
         invocationGeneration &+= 1
         return drainInvocationWaiters()
     }
 
     private func callHistorySnapshot() -> (generation: UInt64, arguments: [Arguments]) {
-        lock.withLock { (invocationGeneration, invocations.map(\.arguments)) }
+        lock.withLock { (invocationGeneration, invocationArguments) }
     }
 
     private func waitForInvocationChange(after generation: UInt64) async throws {
@@ -419,5 +415,22 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         let continuations = invocationWaiters.values.compactMap(\.continuation)
         invocationWaiters.removeAll()
         return continuations
+    }
+}
+
+extension [UInt64] {
+    /// The index of `value` in this ascending array, found by binary search.
+    func sortedIndex(of value: UInt64) -> Int? {
+        var low = startIndex
+        var high = endIndex
+        while low < high {
+            let middle = low + (high - low) / 2
+            if self[middle] < value {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        return low < endIndex && self[low] == value ? low : nil
     }
 }
