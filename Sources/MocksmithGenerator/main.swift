@@ -212,7 +212,7 @@ private struct SourceSnapshot: Codable, Equatable {
                 // Read every input in the relevant modules: a previously irrelevant
                 // file may gain a declaration, even with unchanged size and mtime.
                 let isRelevant = data.withUnsafeBytes { bytes in
-                    ["Mockable", "protocol", "typealias"].contains { containsText($0, in: bytes) }
+                    ["Mockable", "protocol", "typealias", "@_exported"].contains { containsText($0, in: bytes) }
                 }
                 guard isRelevant else {
                     continue
@@ -253,15 +253,20 @@ private struct SourceUnit {
     let module: String
     let path: String
     let tree: SourceFileSyntax
+    /// Every module imported at top level, including inside `#if` clauses,
+    /// whose conditions the generator cannot evaluate.
     let importedModules: Set<String>
+    /// The imported modules this file re-exports with `@_exported import`.
+    let exportedModules: Set<String>
     let imports: CodeBlockItemListSyntax
     private let locations: LazySourceLocations
 
-    init(module: String, path: String, tree: SourceFileSyntax, importedModules: Set<String>, imports: CodeBlockItemListSyntax) {
+    init(module: String, path: String, tree: SourceFileSyntax, imports: CodeBlockItemListSyntax) {
         self.module = module
         self.path = path
         self.tree = tree
-        self.importedModules = importedModules
+        importedModules = importedModuleNames(in: imports, exportedOnly: false)
+        exportedModules = importedModuleNames(in: imports, exportedOnly: true)
         self.imports = imports
         locations = LazySourceLocations(path: path, tree: tree)
     }
@@ -409,11 +414,12 @@ private final class Scanner {
     let usesDependencySources: Bool
     private var protocols: [DeclarationID: [ProtocolRecord]] = [:]
     private var aliases: [DeclarationID: [AliasRecord]] = [:]
-    /// Sources not parsed yet, by module; resolution parses them on demand.
-    private var unparsedSources: [String: [SourceInput]] = [:]
+    /// Sources not parsed as candidates, by module; resolution parses them on demand.
+    private var remainingSources: [String: [SourceInput]] = [:]
     /// Unparsed sources by module and by a name they may declare.
     private var declarationIndex: [String: [String: [SourceInput]]] = [:]
     private var loadedSources = Set<SourceKey>()
+    private var reexports: [String: Set<String>] = [:]
     private var closures: [ResolvedDeclaration: InheritanceClosure] = [:]
     private var resolving = Set<ResolvedDeclaration>()
     private var memberKeys: [SyntaxIdentifier: String] = [:]
@@ -437,18 +443,22 @@ private final class Scanner {
     /// inherited-protocol resolution, which parses only the files it needs.
     func loadRemainingSources(from snapshot: SourceSnapshot) {
         for input in snapshot.contents where !loadedSources.contains(SourceKey(module: input.module, path: input.path)) {
-            unparsedSources[input.module, default: []].append(input)
+            remainingSources[input.module, default: []].append(input)
         }
+    }
+
+    private func load(_ sources: [SourceInput]) {
+        register(Self.parse(sources.filter { !loadedSources.contains(SourceKey(module: $0.module, path: $0.path)) }))
     }
 
     /// Parses the sources of `module` that may declare `name`. The module's
     /// sources are indexed lexically on first use; files whose declarations
     /// cannot be read that way are parsed immediately.
     private func loadDeclarations(named name: String, in module: String) {
-        if let sources = unparsedSources.removeValue(forKey: module) {
+        if declarationIndex[module] == nil {
             var index: [String: [SourceInput]] = [:]
             var unindexed: [SourceInput] = []
-            for input in sources {
+            for input in remainingSources[module] ?? [] where !loadedSources.contains(SourceKey(module: input.module, path: input.path)) {
                 guard let names = declaredNames(in: input.source) else {
                     unindexed.append(input)
                     continue
@@ -458,14 +468,32 @@ private final class Scanner {
                 }
             }
             declarationIndex[module] = index
-            register(Self.parse(unindexed))
+            load(unindexed)
         }
-        guard let sources = declarationIndex[module]?.removeValue(forKey: name) else {
-            return
+        load(declarationIndex[module]?.removeValue(forKey: name) ?? [])
+    }
+
+    /// The modules that `module` makes visible to its importers through
+    /// `@_exported import`, transitively.
+    private func reexportedModules(of module: String) -> Set<String> {
+        var result = Set<String>()
+        var pending = [module]
+        while let next = pending.popLast() {
+            for exported in directlyReexportedModules(of: next) where result.insert(exported).inserted {
+                pending.append(exported)
+            }
         }
-        register(Self.parse(sources.filter {
-            !loadedSources.contains(SourceKey(module: $0.module, path: $0.path))
-        }))
+        return result
+    }
+
+    private func directlyReexportedModules(of module: String) -> Set<String> {
+        if let modules = reexports[module] {
+            return modules
+        }
+        load((remainingSources[module] ?? []).filter { containsText("@_exported", in: $0.source) })
+        let modules = Set(units.filter { $0.module == module }.flatMap(\.exportedModules))
+        reexports[module] = modules
+        return modules
     }
 
     private func register(_ parsed: [SourceUnit]) {
@@ -503,22 +531,15 @@ private final class Scanner {
                 guard containsText("Mockable", in: input.source) else {
                     continue
                 }
-            } else if !containsText("protocol", in: input.source), !containsText("typealias", in: input.source) {
+            } else if !["protocol", "typealias", "@_exported"].contains(where: { containsText($0, in: input.source) }) {
                 continue
             }
             if traceParsing {
                 FileHandle.standardError.write(Data("MocksmithGenerator: parsed \(input.path)\n".utf8))
             }
             let tree = Parser.parse(source: input.source)
-            let imports = tree.statements.compactMap { $0.item.as(ImportDeclSyntax.self) }
             units.append(
-                SourceUnit(
-                    module: input.module,
-                    path: input.path,
-                    tree: tree,
-                    importedModules: Set(imports.compactMap { $0.path.first?.name.text }),
-                    imports: importStatements(in: tree.statements)
-                )
+                SourceUnit(module: input.module, path: input.path, tree: tree, imports: importStatements(in: tree.statements))
             )
         }
         return units
@@ -728,7 +749,10 @@ private final class Scanner {
             return try resolvedDeclaration(local, referencedFrom: unit)
         }
 
-        let importedModules = units[unit].importedModules.filter(availableSourceModules.contains)
+        let directlyImported = units[unit].importedModules.filter(availableSourceModules.contains)
+        let importedModules = directlyImported
+            .union(directlyImported.flatMap(reexportedModules(of:)))
+            .filter(availableSourceModules.contains)
         for module in importedModules {
             loadDeclarations(named: reference.name, in: module)
         }
@@ -889,6 +913,25 @@ private final class Scanner {
     private func sourceError(at record: AliasRecord, _ message: String) -> GeneratorError {
         .source(units[record.unit].location(of: record.declaration), message)
     }
+}
+
+private func importedModuleNames(in statements: CodeBlockItemListSyntax, exportedOnly: Bool) -> Set<String> {
+    var names = Set<String>()
+    for item in statements {
+        if let declaration = item.item.as(ImportDeclSyntax.self) {
+            if !exportedOnly || hasAttribute(named: "_exported", in: declaration.attributes),
+               let name = declaration.path.first?.name.text {
+                names.insert(name)
+            }
+        } else if let conditional = item.item.as(IfConfigDeclSyntax.self) {
+            for clause in conditional.clauses {
+                if let nested = clause.elements?.as(CodeBlockItemListSyntax.self) {
+                    names.formUnion(importedModuleNames(in: nested, exportedOnly: exportedOnly))
+                }
+            }
+        }
+    }
+    return names
 }
 
 /// Preserves import conditions without copying unrelated source declarations.

@@ -257,6 +257,47 @@ public typealias SharedBoth = SharedLeft & SharedRight
             assert positions == sorted(positions), (index, names)
             assert all(mock.count(f'(name: "{name}")') == 1 for name in names + ["own"])
 
+        # Inherited protocols resolve through imports inside #if clauses and
+        # through modules that imported modules re-export, transitively.
+        reexport = directory / "Reexport"
+        reexport.mkdir()
+        reexport_child = reexport / "Child.swift"
+        reexport_child.write_text("""import Mocksmith
+#if canImport(Conditional)
+import Conditional
+#endif
+import Facade
+@Mockable protocol ConditionalChild: ConditionalParent {}
+@Mockable protocol ReexportedChild: ReexportedParent {}
+""")
+        conditional_parent = reexport / "ConditionalParent.swift"
+        conditional_parent.write_text("public protocol ConditionalParent { func conditional() -> Int }\n")
+        facade = reexport / "Facade.swift"
+        facade.write_text("@_exported import Middle\n")
+        middle = reexport / "Middle.swift"
+        middle.write_text("#if true\n@_exported public import Core\n#endif\n")
+        core = reexport / "Core.swift"
+        core.write_text("public protocol ReexportedParent { func reexported() -> Int }\n")
+        reexport_output = reexport / "Generated.swift"
+        reexport_command = [
+            str(generator), "--output", str(reexport_output), "--target-module", "ReexportFixture",
+            "--module", "ReexportFixture", str(reexport_child),
+            "--module", "Conditional", str(conditional_parent),
+            "--module", "Facade", str(facade), "--module", "Middle", str(middle), "--module", "Core", str(core),
+        ]
+        subprocess.run(reexport_command, cwd=root, check=True)
+        reexported = reexport_output.read_text()
+        assert "func conditional() -> Int" in reexported
+        assert "func reexported() -> Int" in reexported
+        assert "import Core" in reexported
+        assert "#if canImport(Conditional)" in reexported
+        # A plain import does not re-export, and must invalidate the cache even
+        # though the file no longer mentions a protocol.
+        middle.write_text("public import Core\n")
+        result = subprocess.run(reexport_command, cwd=root, text=True, capture_output=True)
+        assert result.returncode != 0
+        assert "cannot resolve inherited protocol or composition alias 'ReexportedParent'" in result.stderr
+
         # Files that were absent from the snapshot must still be read each run.
         unrelated.write_text("@Mockable protocol AddedService {}\n")
         assert "AddedServiceMock" in generate()
