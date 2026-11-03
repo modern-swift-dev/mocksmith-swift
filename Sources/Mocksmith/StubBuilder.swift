@@ -23,8 +23,8 @@ public struct _MocksmithAsyncReturnStub<Arguments, Ephemeral, Output, Answer> {
         answerOutcome = answer
     }
 
-    @discardableResult public func willReturn(_ values: Output...) -> _MocksmithAsyncReturnSequence<Arguments, Ephemeral, Output, Answer> {
-        .init(registration: apply(values.map(StubOutcome.returning)), answer: answerOutcome, member: member)
+    @discardableResult public func willReturn(_ value: Output, _ values: Output...) -> _MocksmithAsyncReturnSequence<Arguments, Ephemeral, Output, Answer> {
+        .init(registration: apply(([value] + values).map(StubOutcome.returning)), answer: answerOutcome, member: member)
     }
 
     @discardableResult public func willSucceed() -> _MocksmithAsyncReturnSequence<Arguments, Ephemeral, Output, Answer> where Output == Void {
@@ -59,8 +59,8 @@ public struct _MocksmithAsyncReturnSequence<Arguments, Ephemeral, Output, Answer
         self.member = member
     }
 
-    @discardableResult public func thenReturn(_ values: Output...) -> Self {
-        registration.append(values.map(StubOutcome.returning))
+    @discardableResult public func thenReturn(_ value: Output, _ values: Output...) -> Self {
+        registration.append(([value] + values).map(StubOutcome.returning))
         return self
     }
 
@@ -126,8 +126,8 @@ public struct _MocksmithPendingSequence<Arguments, Ephemeral, Output, Answer>: @
         pending.resume()
     }
 
-    @discardableResult public func thenReturn(_ values: Output...) -> Self {
-        registration.append(values.map(StubOutcome.returning)); return self
+    @discardableResult public func thenReturn(_ value: Output, _ values: Output...) -> Self {
+        registration.append(([value] + values).map(StubOutcome.returning)); return self
     }
 
     @discardableResult public func thenSucceed() -> Self where Output == Void {
@@ -165,8 +165,8 @@ public struct _MocksmithAsyncThrowingReturnStub<Arguments, Ephemeral, Output, Fa
         answerOutcome = answer
     }
 
-    @discardableResult public func willReturn(_ values: Output...) -> _MocksmithAsyncThrowingReturnSequence<Arguments, Ephemeral, Output, Failure, Answer> {
-        makeSequence(apply(values.map(StubOutcome.returning)))
+    @discardableResult public func willReturn(_ value: Output, _ values: Output...) -> _MocksmithAsyncThrowingReturnSequence<Arguments, Ephemeral, Output, Failure, Answer> {
+        makeSequence(apply(([value] + values).map(StubOutcome.returning)))
     }
 
     @discardableResult public func willSucceed() -> _MocksmithAsyncThrowingReturnSequence<Arguments, Ephemeral, Output, Failure, Answer> where Output == Void {
@@ -222,8 +222,8 @@ public struct _MocksmithAsyncThrowingReturnSequence<Arguments, Ephemeral, Output
         self.member = member
     }
 
-    @discardableResult public func thenReturn(_ values: Output...) -> Self {
-        registration.append(values.map(StubOutcome.returning))
+    @discardableResult public func thenReturn(_ value: Output, _ values: Output...) -> Self {
+        registration.append(([value] + values).map(StubOutcome.returning))
         return self
     }
 
@@ -310,8 +310,8 @@ public struct _MocksmithThrowingPendingSequence<Arguments, Ephemeral, Output, Fa
         pending.resume(with: result)
     }
 
-    @discardableResult public func thenReturn(_ values: Output...) -> Self {
-        registration.append(values.map(StubOutcome.returning))
+    @discardableResult public func thenReturn(_ value: Output, _ values: Output...) -> Self {
+        registration.append(([value] + values).map(StubOutcome.returning))
         return self
     }
 
@@ -361,9 +361,9 @@ public struct _MocksmithReturnStub<Arguments, Ephemeral, Output, Answer> {
     }
 
     @discardableResult public func willReturn(
-        _ values: Output...
+        _ value: Output, _ values: Output...
     ) -> _MocksmithReturnSequence<Arguments, Ephemeral, Output, Answer> {
-        .init(registration: apply(values.map(StubOutcome.returning)), answer: answerOutcome)
+        .init(registration: apply(([value] + values).map(StubOutcome.returning)), answer: answerOutcome)
     }
 
     @discardableResult public func willAnswer(_ answer: Answer) -> _MocksmithReturnSequence<Arguments, Ephemeral, Output, Answer> {
@@ -384,8 +384,8 @@ public struct _MocksmithReturnSequence<Arguments, Ephemeral, Output, Answer> {
         answerOutcome = answer
     }
 
-    @discardableResult public func thenReturn(_ values: Output...) -> Self {
-        registration.append(values.map(StubOutcome.returning))
+    @discardableResult public func thenReturn(_ value: Output, _ values: Output...) -> Self {
+        registration.append(([value] + values).map(StubOutcome.returning))
         return self
     }
 
@@ -417,15 +417,15 @@ public struct _MocksmithThrowingReturnStub<
     }
 
     @discardableResult public func willReturn(
-        _ values: Output...
+        _ value: Output, _ values: Output...
     ) -> _MocksmithThrowingReturnSequence<Arguments, Ephemeral, Output, Failure, Answer> {
-        .init(registration: apply(values.map(StubOutcome.returning)), answer: answerOutcome)
+        .init(registration: apply(([value] + values).map(StubOutcome.returning)), answer: answerOutcome)
     }
 
     @discardableResult public func willThrow(
-        _ errors: Failure...
+        _ error: Failure, _ errors: Failure...
     ) -> _MocksmithThrowingReturnSequence<Arguments, Ephemeral, Output, Failure, Answer> {
-        .init(registration: apply(errors.map(StubOutcome.throwing)), answer: answerOutcome)
+        .init(registration: apply(([error] + errors).map(StubOutcome.throwing)), answer: answerOutcome)
     }
 
     @discardableResult public func willResolve(
@@ -460,13 +460,13 @@ public struct _MocksmithThrowingReturnSequence<
         answerOutcome = answer
     }
 
-    @discardableResult public func thenReturn(_ values: Output...) -> Self {
-        registration.append(values.map(StubOutcome.returning))
+    @discardableResult public func thenReturn(_ value: Output, _ values: Output...) -> Self {
+        registration.append(([value] + values).map(StubOutcome.returning))
         return self
     }
 
-    @discardableResult public func thenThrow(_ errors: Failure...) -> Self {
-        registration.append(errors.map(StubOutcome.throwing))
+    @discardableResult public func thenThrow(_ error: Failure, _ errors: Failure...) -> Self {
+        registration.append(([error] + errors).map(StubOutcome.throwing))
         return self
     }
 
@@ -504,9 +504,9 @@ public struct _MocksmithProduceStub<
     }
 
     @discardableResult public func willProduce(
-        _ producers: (() -> Output)...
+        _ producer: @escaping () -> Output, _ producers: (() -> Output)...
     ) -> _MocksmithProduceSequence<Arguments, Ephemeral, Output, Answer> {
-        .init(registration: apply(producers.map(TransientStubOutcome.producing)), answer: answerOutcome)
+        .init(registration: apply(([producer] + producers).map(TransientStubOutcome.producing)), answer: answerOutcome)
     }
 
     @discardableResult public func willAnswer(_ answer: Answer) -> _MocksmithProduceSequence<Arguments, Ephemeral, Output, Answer> {
@@ -531,8 +531,8 @@ public struct _MocksmithProduceSequence<
         answerOutcome = answer
     }
 
-    @discardableResult public func thenProduce(_ producers: (() -> Output)...) -> Self {
-        registration.append(producers.map(TransientStubOutcome.producing))
+    @discardableResult public func thenProduce(_ producer: @escaping () -> Output, _ producers: (() -> Output)...) -> Self {
+        registration.append(([producer] + producers).map(TransientStubOutcome.producing))
         return self
     }
 
@@ -563,15 +563,15 @@ public struct _MocksmithThrowingProduceStub<
     }
 
     @discardableResult public func willProduce(
-        _ producers: (() -> Output)...
+        _ producer: @escaping () -> Output, _ producers: (() -> Output)...
     ) -> _MocksmithThrowingProduceSequence<Arguments, Ephemeral, Output, Failure, Answer> {
-        .init(registration: apply(producers.map(TransientStubOutcome.producing)), answer: answerOutcome)
+        .init(registration: apply(([producer] + producers).map(TransientStubOutcome.producing)), answer: answerOutcome)
     }
 
     @discardableResult public func willThrow(
-        _ errors: Failure...
+        _ error: Failure, _ errors: Failure...
     ) -> _MocksmithThrowingProduceSequence<Arguments, Ephemeral, Output, Failure, Answer> {
-        .init(registration: apply(errors.map(TransientStubOutcome.throwing)), answer: answerOutcome)
+        .init(registration: apply(([error] + errors).map(TransientStubOutcome.throwing)), answer: answerOutcome)
     }
 
     @discardableResult public func willAnswer(
@@ -599,13 +599,13 @@ public struct _MocksmithThrowingProduceSequence<
         answerOutcome = answer
     }
 
-    @discardableResult public func thenProduce(_ producers: (() -> Output)...) -> Self {
-        registration.append(producers.map(TransientStubOutcome.producing))
+    @discardableResult public func thenProduce(_ producer: @escaping () -> Output, _ producers: (() -> Output)...) -> Self {
+        registration.append(([producer] + producers).map(TransientStubOutcome.producing))
         return self
     }
 
-    @discardableResult public func thenThrow(_ errors: Failure...) -> Self {
-        registration.append(errors.map(TransientStubOutcome.throwing))
+    @discardableResult public func thenThrow(_ error: Failure, _ errors: Failure...) -> Self {
+        registration.append(([error] + errors).map(TransientStubOutcome.throwing))
         return self
     }
 
@@ -639,9 +639,9 @@ public struct _MocksmithThrowingVoidStub<
     }
 
     @discardableResult public func willThrow(
-        _ errors: Failure...
+        _ error: Failure, _ errors: Failure...
     ) -> _MocksmithThrowingVoidSequence<Arguments, Ephemeral, Failure, Answer> {
-        .init(registration: apply(errors.map(StubOutcome.throwing)), answer: answerOutcome)
+        .init(registration: apply(([error] + errors).map(StubOutcome.throwing)), answer: answerOutcome)
     }
 
     @discardableResult public func willResolve(
@@ -679,8 +679,8 @@ public struct _MocksmithThrowingVoidSequence<
         return self
     }
 
-    @discardableResult public func thenThrow(_ errors: Failure...) -> Self {
-        registration.append(errors.map(StubOutcome.throwing))
+    @discardableResult public func thenThrow(_ error: Failure, _ errors: Failure...) -> Self {
+        registration.append(([error] + errors).map(StubOutcome.throwing))
         return self
     }
 
@@ -721,9 +721,9 @@ public struct _MocksmithThrowingProduceVoidStub<
     }
 
     @discardableResult public func willThrow(
-        _ errors: Failure...
+        _ error: Failure, _ errors: Failure...
     ) -> _MocksmithThrowingProduceVoidSequence<Arguments, Ephemeral, Failure, Answer> {
-        .init(registration: apply(errors.map(TransientStubOutcome.throwing)), answer: answerOutcome)
+        .init(registration: apply(([error] + errors).map(TransientStubOutcome.throwing)), answer: answerOutcome)
     }
 
     @discardableResult public func willAnswer(
@@ -755,8 +755,8 @@ public struct _MocksmithThrowingProduceVoidSequence<
         return self
     }
 
-    @discardableResult public func thenThrow(_ errors: Failure...) -> Self {
-        registration.append(errors.map(TransientStubOutcome.throwing))
+    @discardableResult public func thenThrow(_ error: Failure, _ errors: Failure...) -> Self {
+        registration.append(([error] + errors).map(TransientStubOutcome.throwing))
         return self
     }
 
