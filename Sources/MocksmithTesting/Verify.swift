@@ -4,7 +4,7 @@ import Testing
 public func Verify<M: Mock>(
     _ mock: M,
     _ count: Count = .atLeast(1),
-    sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)
+    sourceLocation: SourceLocation = #_sourceLocation
 ) -> M.Verify {
     mock.verification(count: count) {
         record($0, sourceLocation: sourceLocation)
@@ -14,7 +14,7 @@ public func Verify<M: Mock>(
 public func Verify<M: Mock>(
     _ mock: M,
     _ count: Int,
-    sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)
+    sourceLocation: SourceLocation = #_sourceLocation
 ) -> M.Verify {
     Verify(mock, .exactly(count), sourceLocation: sourceLocation)
 }
@@ -22,7 +22,7 @@ public func Verify<M: Mock>(
 public func Verify<M: StaticMock>(
     _ mock: M.Type,
     _ count: Count = .atLeast(1),
-    sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)
+    sourceLocation: SourceLocation = #_sourceLocation
 ) -> M.StaticVerify {
     M.verification(count: count) {
         record($0, sourceLocation: sourceLocation)
@@ -32,14 +32,14 @@ public func Verify<M: StaticMock>(
 public func Verify<M: StaticMock>(
     _ mock: M.Type,
     _ count: Int,
-    sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)
+    sourceLocation: SourceLocation = #_sourceLocation
 ) -> M.StaticVerify {
     Verify(mock, .exactly(count), sourceLocation: sourceLocation)
 }
 
 public func VerifyInOrder(
     _ mode: InOrderMode = .strict,
-    sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column),
+    sourceLocation: SourceLocation = #_sourceLocation,
     _ body: (InOrder) -> Void
 ) {
     let order = InOrder(mode: mode)
@@ -49,14 +49,14 @@ public func VerifyInOrder(
 
 public func VerifyNoMoreInteractions(
     _ mock: some _MocksmithExhaustiveMock,
-    sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)
+    sourceLocation: SourceLocation = #_sourceLocation
 ) {
     record(_mocksmithNoMoreInteractionsResult(mock._mocksmithUnverifiedInvocations), sourceLocation: sourceLocation)
 }
 
 public func VerifyNoMoreInteractions<M: _MocksmithExhaustiveStaticMock>(
     _ mock: M.Type,
-    sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)
+    sourceLocation: SourceLocation = #_sourceLocation
 ) {
     record(_mocksmithNoMoreInteractionsResult(M._mocksmithUnverifiedInvocations), sourceLocation: sourceLocation)
 }

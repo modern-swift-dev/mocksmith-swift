@@ -253,3 +253,21 @@ private struct AdapterVerify {
         report(result)
     }
 }
+
+@Test private func swiftTestingAdapterDefaultsToCallerSourceLocation() {
+    let line = #line + 2
+    withKnownIssue {
+        MocksmithTesting.Verify(FailingMock(), 1).check()
+    } matching: { issue in
+        issue.sourceLocation?.fileID == #fileID && issue.sourceLocation?.line == line
+    }
+}
+
+@Test private func swiftTestingInOrderAdapterDefaultsToCallerSourceLocation() {
+    let line = #line + 2
+    withKnownIssue {
+        MocksmithTesting.VerifyInOrder { _ in }
+    } matching: { issue in
+        issue.sourceLocation?.fileID == #fileID && issue.sourceLocation?.line == line
+    }
+}
