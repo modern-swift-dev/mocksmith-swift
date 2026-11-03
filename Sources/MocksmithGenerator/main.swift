@@ -6,6 +6,9 @@ import SwiftSyntaxMacroExpansion
 
 private let markerOrder = ["AnyObject", "Sendable", "Actor", "~Copyable", "NSObjectProtocol"]
 private let markerNames = Set(markerOrder)
+/// Reports each parsed source on standard error, so tests can prove that a
+/// cache hit skipped parsing.
+private let traceParsing = ProcessInfo.processInfo.environment["MOCKSMITH_GENERATOR_TRACE_PARSING"] == "1"
 
 private struct Arguments {
     let output: URL
@@ -419,6 +422,9 @@ private final class Scanner {
                 }
             } else if !input.source.contains("protocol"), !input.source.contains("typealias") {
                 continue
+            }
+            if traceParsing {
+                FileHandle.standardError.write(Data("MocksmithGenerator: parsed \(input.path)\n".utf8))
             }
             let tree = Parser.parse(source: input.source)
             let imports = tree.statements.compactMap { $0.item.as(ImportDeclSyntax.self) }
@@ -1035,9 +1041,17 @@ do {
             && cached?.input.targetModule == arguments.targetModule
             && cached?.usesDependencySources != nil && cached?.snapshot == snapshot
     }
+    // When the previous run needed dependency sources, an identical snapshot of
+    // them proves the target is unchanged too, so compare it before parsing.
+    let fullSnapshot = cached?.usesDependencySources == true
+        ? try targetSnapshot.includingDependencies(from: arguments)
+        : nil
     let generated: GenerationCache
     let cacheHit: Bool
     if let cached, cached.usesDependencySources == false, cacheMatches(targetSnapshot) {
+        generated = cached
+        cacheHit = true
+    } else if let cached, let fullSnapshot, cacheMatches(fullSnapshot) {
         generated = cached
         cacheHit = true
     } else {
@@ -1045,7 +1059,7 @@ do {
         // module's sources, so those files are read only when inheritance demands.
         let scanner = try Scanner(targetModule: arguments.targetModule, snapshot: targetSnapshot)
         if scanner.usesDependencySources {
-            let snapshot = try targetSnapshot.includingDependencies(from: arguments)
+            let snapshot = try fullSnapshot ?? targetSnapshot.includingDependencies(from: arguments)
             if let cached, cacheMatches(snapshot) {
                 generated = cached
                 cacheHit = true

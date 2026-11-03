@@ -56,6 +56,15 @@ protocol Parent {
             subprocess.run(command, cwd=root, check=True)
             return output.read_text()
 
+        def parsed_paths():
+            """Runs the generator and returns the sources it parsed."""
+            result = subprocess.run(
+                command, cwd=root, check=True, text=True, capture_output=True,
+                env={**os.environ, "MOCKSMITH_GENERATOR_TRACE_PARSING": "1"},
+            )
+            prefix = "MocksmithGenerator: parsed "
+            return [line[len(prefix):] for line in result.stderr.splitlines() if line.startswith(prefix)]
+
         generated = generate()
         assert "class FastServiceMock:" in generated
         assert "class ChildMock:" in generated
@@ -178,6 +187,14 @@ import Dependency
         inherited = generate()
         assert "func other() -> Int" in inherited
         assert "func first() -> Int" not in inherited
+
+        # An inheriting target's no-op rerun compares its snapshot, including
+        # dependency sources, before parsing anything.
+        assert parsed_paths() == []
+        assert output.read_text() == inherited
+        parent.write_text(parent.read_text() + "\n")
+        assert str(declarations) in parsed_paths()
+        assert output.read_text() == inherited
 
         # Files that were absent from the snapshot must still be read each run.
         unrelated.write_text("@Mockable protocol AddedService {}\n")
