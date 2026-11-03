@@ -72,31 +72,57 @@ public final class InOrder {
         }
 
         let invocations = sources.values.flatMap { $0() }.sorted { $0.sequence < $1.sequence }
-        guard var index = invocations.firstIndex(where: { first.matches($0.sequence) }) else {
+        let starts = invocations.indices.filter { first.matches(invocations[$0].sequence) }
+        guard !starts.isEmpty else {
             return .init(success: false, message: "Expected first in-order invocation \(first.member), but it was not called")
         }
-        var matched = [(first, invocations[index].sequence)]
+
+        // The first expectation may match anywhere, so try every occurrence as a start and keep
+        // the failure that got furthest (earliest on ties) to explain why none matched.
+        var bestFailure = (matchedCount: 0, message: "")
+        for start in starts {
+            switch attempt(from: start, in: invocations) {
+                case let .matched(matched):
+                    matched.forEach { $0.expectation.markVerified($0.sequence) }
+                    return .init(success: true, message: "Verified \(expectations.count) invocations in order")
+                case let .failed(matchedCount, message):
+                    if matchedCount > bestFailure.matchedCount {
+                        bestFailure = (matchedCount, message)
+                    }
+            }
+        }
+        return .init(success: false, message: bestFailure.message)
+    }
+
+    private enum Attempt {
+        case matched([(expectation: Expectation, sequence: UInt64)])
+        case failed(matchedCount: Int, message: String)
+    }
+
+    private func attempt(from start: Int, in invocations: [_MocksmithInvocation]) -> Attempt {
+        var index = start
+        var matched = [(expectation: expectations[0], sequence: invocations[start].sequence)]
 
         for expectation in expectations.dropFirst() {
+            let previous = invocations[index]
             index += 1
             guard index < invocations.endIndex else {
-                return .init(
-                    success: false,
-                    message: "Expected \(expectation.member) after \(invocations[index - 1].member), but no invocation followed"
+                return .failed(
+                    matchedCount: matched.count,
+                    message: "Expected \(expectation.member) after \(previous.member), but no invocation followed"
                 )
             }
             let actual = invocations[index]
             guard expectation.matches(actual.sequence) else {
-                return .init(
-                    success: false,
-                    message: "Expected \(expectation.member) after \(invocations[index - 1].member), got \(actual.member)"
+                let got = actual.member == expectation.member ? "\(actual.member) with non-matching arguments" : actual.member
+                return .failed(
+                    matchedCount: matched.count,
+                    message: "Expected \(expectation.member) after \(previous.member), got \(got)"
                 )
             }
             matched.append((expectation, actual.sequence))
         }
-
-        matched.forEach { $0.0.markVerified($0.1) }
-        return .init(success: true, message: "Verified \(expectations.count) invocations in order")
+        return .matched(matched)
     }
 }
 
