@@ -70,10 +70,11 @@ private struct ImportCache: Codable, Equatable {
 
 struct ImportScanner {
     /// Do not backtrack across whole runs of masked, otherwise blank comment lines.
+    /// Statements start a line or follow a semicolon, as in `import A; import B`.
     private static let importExpression: NSRegularExpression = {
         do {
             return try NSRegularExpression(
-                pattern: #"(?m)^[^\S\r\n]*(?:(?:@[A-Za-z_][A-Za-z0-9_]*)(?:\([^)\r\n]*\))?\s+)*(?:(?:public|package|internal|fileprivate|private|open)\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?([A-Za-z_][A-Za-z0-9_]*)"#
+                pattern: #"(?m)(?:^|;)[^\S\r\n]*(?:(?:@[A-Za-z_][A-Za-z0-9_]*)(?:\([^)\r\n]*\))?\s+)*(?:(?:public|package|internal|fileprivate|private|open)\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?([A-Za-z_][A-Za-z0-9_]*)"#
             )
         } catch {
             preconditionFailure("invalid import pattern: \(error)")

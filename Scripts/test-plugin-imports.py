@@ -56,6 +56,8 @@ print(String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
 @preconcurrency import ConcurrentModule
 public import PublicModule
 import struct ScopedModule.Value
+import SameLineFirst; @testable import SameLineSecond;import SameLineThird
+let semicolon = 1; let fakeSemicolon = "; import FakeSemicolon"
 #if false
 import ConditionalModule
 #endif
@@ -78,6 +80,7 @@ import FakeRawMultiline
         expected = {
             "Alpha", "Foundation", "TestModule", "ConcurrentModule",
             "PublicModule", "ScopedModule", "ConditionalModule",
+            "SameLineFirst", "SameLineSecond", "SameLineThird",
         }
 
         def scan(expected_scans, expected_reads=None):
