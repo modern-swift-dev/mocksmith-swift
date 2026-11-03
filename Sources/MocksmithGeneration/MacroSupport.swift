@@ -132,8 +132,16 @@ func objectIdentifierList(_ metatypes: String) -> String {
     return "[\(values.joined(separator: ", "))]"
 }
 
+/// Removes each `@escaping` and the whitespace after it, without compiling a
+/// regular expression for every parameter.
 func strippingEscapingAttribute(from type: String) -> String {
-    type.replacingOccurrences(of: "@escaping\\s*", with: "", options: .regularExpression)
+    var result = ""
+    var remainder = type[...]
+    while let range = remainder.range(of: "@escaping") {
+        result += remainder[..<range.lowerBound]
+        remainder = remainder[range.upperBound...].drop(while: \.isWhitespace)
+    }
+    return result + remainder
 }
 
 /// Returns whether a type is structurally an optional, without confusing a

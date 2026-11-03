@@ -209,17 +209,21 @@ private struct SourceSnapshot: Codable, Equatable {
                         "cannot read source: \(error.localizedDescription)"
                     )
                 }
+                // Read every input in the relevant modules: a previously irrelevant
+                // file may gain a declaration, even with unchanged size and mtime.
+                let isRelevant = data.withUnsafeBytes { bytes in
+                    ["Mockable", "protocol", "typealias"].contains { containsText($0, in: bytes) }
+                }
+                guard isRelevant else {
+                    continue
+                }
                 guard let source = String(data: data, encoding: .utf8) else {
                     throw GeneratorError.source(
                         .init(path: path, line: 1, column: 1),
                         "cannot read source: the file is not valid UTF-8"
                     )
                 }
-                // Read every input in the relevant modules: a previously irrelevant
-                // file may gain a declaration, even with unchanged size and mtime.
-                if source.contains("Mockable") || source.contains("protocol") || source.contains("typealias") {
-                    sources.append(SourceInput(module: module.name, path: path, source: source, digest: SHA256.hexDigest(of: data)))
-                }
+                sources.append(SourceInput(module: module.name, path: path, source: source, digest: SHA256.hexDigest(of: data)))
             }
         }
         return sources
@@ -496,10 +500,10 @@ private final class Scanner {
         var units: [SourceUnit] = []
         for input in sources {
             if onlyMockableCandidates {
-                guard input.source.contains("Mockable") else {
+                guard containsText("Mockable", in: input.source) else {
                     continue
                 }
-            } else if !input.source.contains("protocol"), !input.source.contains("typealias") {
+            } else if !containsText("protocol", in: input.source), !containsText("typealias", in: input.source) {
                 continue
             }
             if traceParsing {
@@ -931,6 +935,20 @@ private final class BuildPluginDeclarationVisitor: SyntaxVisitor {
         conditionalDepth -= 1
     }
 
+    /// Protocols cannot be declared in function, accessor, or closure bodies,
+    /// so skip walking them.
+    override func visit(_ node: CodeBlockSyntax) -> SyntaxVisitorContinueKind {
+        .skipChildren
+    }
+
+    override func visit(_ node: AccessorBlockSyntax) -> SyntaxVisitorContinueKind {
+        .skipChildren
+    }
+
+    override func visit(_ node: ClosureExprSyntax) -> SyntaxVisitorContinueKind {
+        .skipChildren
+    }
+
     override func visit(_ node: ProtocolDeclSyntax) -> SyntaxVisitorContinueKind {
         if requestsBuildPlugin(node) {
             if conditionalDepth > 0 {
@@ -1012,6 +1030,23 @@ private func declaredNames(in source: String) -> Set<String>? {
             }
         }
         return names
+    }
+}
+
+/// Byte-wise substring search; `String.contains` compares `Character`s, which
+/// costs far more on whole source files.
+private func containsText(_ needle: String, in source: String) -> Bool {
+    var source = source
+    return source.withUTF8 { containsText(needle, in: UnsafeRawBufferPointer($0)) }
+}
+
+private func containsText(_ needle: String, in bytes: UnsafeRawBufferPointer) -> Bool {
+    var needle = needle
+    return needle.withUTF8 { needle in
+        guard let base = bytes.baseAddress, let needleBase = needle.baseAddress else {
+            return needle.isEmpty
+        }
+        return memmem(base, bytes.count, needleBase, needle.count) != nil
     }
 }
 
