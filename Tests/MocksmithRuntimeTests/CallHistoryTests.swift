@@ -165,3 +165,65 @@ import Testing
     #expect(member.callHistory(matching: { $0 == 1 }).count == 1)
     #expect(member._mocksmithUnverifiedInvocations.count == 1)
 }
+
+/// Yields until `condition` holds, failing instead of hanging if it never does.
+private func eventually(_ condition: () -> Bool) async {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while !condition(), ContinuousClock.now < deadline {
+        await Task.yield()
+    }
+    #expect(condition())
+}
+
+@Test func callHistoryWaitMatchesEachInvocationOnce() async throws {
+    let member = MockMember<Int, Void, Void>(name: "save")
+    let evaluations = EvaluationCounter()
+    let history = member.callHistory { _ in evaluations.increment(); return true }
+    let recorded = 50
+    let waiting = Task { try await history.waitForCount(recorded, timeout: .seconds(5)) }
+
+    // Each record wakes the waiter; rescanning everything on wake-up would be quadratic.
+    for value in 1 ... recorded {
+        member.record(value)
+        await eventually { evaluations.value >= value }
+    }
+    try await waiting.value
+    #expect(evaluations.value == recorded)
+}
+
+@Test func callHistoryWaitRestartsMatchingAfterReset() async {
+    let member = MockMember<Int, Void, Void>(name: "save")
+    let evaluations = EvaluationCounter()
+    let history = member.callHistory { _ in evaluations.increment(); return true }
+    member.record(1)
+    member.record(2)
+    let waiting = Task { try await history.waitForCount(3, timeout: .milliseconds(200)) }
+    await eventually { evaluations.value >= 2 }
+
+    member.reset([.invocations])
+    member.record(3)
+    await #expect(throws: MockWaitError.timedOut(member: "save", expectedCount: 3, actualCount: 1)) {
+        try await waiting.value
+    }
+    #expect(evaluations.value == 3)
+}
+
+@Test func callHistoryAccessorsMatchLazily() throws {
+    let member = MockMember<Int, Void, Void>(name: "save")
+    let evaluations = EvaluationCounter()
+    let history = member.callHistory { evaluations.increment(); return $0.isMultiple(of: 2) }
+    for value in 1 ... 10 {
+        member.record(value)
+    }
+
+    #expect(history.firstArgument == 2)
+    #expect(evaluations.value == 2)
+    #expect(history.lastArgument == 10)
+    #expect(evaluations.value == 3)
+    #expect(history.argument(at: 1) == 4)
+    #expect(history.count == 5)
+    #expect(history.arguments == [2, 4, 6, 8, 10])
+    #expect(throws: CallHistoryError.expectedExactlyOne(member: "save", actualCount: 5)) {
+        try history.onlyArgument
+    }
+}

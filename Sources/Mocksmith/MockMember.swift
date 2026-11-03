@@ -49,6 +49,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
     private var actionStubs: [ActionStub] = []
     private var nextID: UInt64 = 0
     private var invocationGeneration: UInt64 = 0
+    private var invocationResets: UInt64 = 0
     private var nextWaiterID: UInt64 = 0
     private var invocationWaiters: [UInt64: InvocationWaiter] = [:]
     private let name: String
@@ -197,9 +198,11 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         CallHistory(
             member: name,
             snapshot: { [self] in
-                let snapshot = callHistorySnapshot()
-                return (snapshot.generation, snapshot.arguments.filter(matching))
+                lock.withLock {
+                    CallHistorySnapshot(generation: invocationGeneration, resets: invocationResets, arguments: invocationArguments)
+                }
             },
+            matching: matching,
             waitForChange: { [self] generation in
                 try await waitForInvocationChange(after: generation)
             }
@@ -265,6 +268,7 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
                 invocationArguments.removeAll()
                 verifiedSequences.removeAll()
                 invocationGeneration &+= 1
+                invocationResets &+= 1
             }
             if scopes.contains(.stubs) {
                 stubs.removeAll()
@@ -366,10 +370,6 @@ public final class MockMember<Arguments, Ephemeral, Output>: @unchecked Sendable
         invocationArguments.append(arguments)
         invocationGeneration &+= 1
         return drainInvocationWaiters()
-    }
-
-    private func callHistorySnapshot() -> (generation: UInt64, arguments: [Arguments]) {
-        lock.withLock { (invocationGeneration, invocationArguments) }
     }
 
     private func waitForInvocationChange(after generation: UInt64) async throws {

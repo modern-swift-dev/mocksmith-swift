@@ -27,7 +27,7 @@ private func report(_ name: String, _ duration: Duration, per operations: Int, u
     print("[benchmark] \(name): \(String(format: "%.3f", each)) µs/\(unit) (\(String(format: "%.1f", total / 1000)) ms total)")
 }
 
-private final class EvaluationCounter: @unchecked Sendable {
+final class EvaluationCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
 

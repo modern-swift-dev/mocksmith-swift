@@ -11,6 +11,16 @@ public enum CallHistoryError: Error, Sendable, Equatable {
     case expectedAtLeastOne(member: String)
 }
 
+/// The recorded arguments of one channel at one point in time.
+struct CallHistorySnapshot<Arguments> {
+    /// Changes whenever an invocation is recorded or invocations are reset.
+    let generation: UInt64
+    /// Changes whenever invocations are reset; between resets `arguments` only grows.
+    let resets: UInt64
+    /// Every recorded argument in invocation order, before matching.
+    let arguments: [Arguments]
+}
+
 /// A typed, observational view of invocations recorded by one mock member.
 public struct CallHistory<Arguments>: @unchecked Sendable {
     private enum WaitResult: Sendable {
@@ -19,7 +29,8 @@ public struct CallHistory<Arguments>: @unchecked Sendable {
     }
 
     private let member: String
-    private let snapshot: () -> (generation: UInt64, arguments: [Arguments])
+    private let snapshot: () -> CallHistorySnapshot<Arguments>
+    private let matching: (Arguments) -> Bool
     private let waitForChange: @Sendable (UInt64) async throws -> Void
 
     package var _mocksmithMemberName: String {
@@ -28,51 +39,63 @@ public struct CallHistory<Arguments>: @unchecked Sendable {
 
     init(
         member: String,
-        snapshot: @escaping () -> (generation: UInt64, arguments: [Arguments]),
+        snapshot: @escaping () -> CallHistorySnapshot<Arguments>,
+        matching: @escaping (Arguments) -> Bool,
         waitForChange: @escaping @Sendable (UInt64) async throws -> Void
     ) {
         self.member = member
         self.snapshot = snapshot
+        self.matching = matching
         self.waitForChange = waitForChange
     }
 
     /// The matching arguments in invocation order.
     public var arguments: [Arguments] {
-        snapshot().arguments
+        snapshot().arguments.filter(matching)
     }
 
     /// The number of matching invocations.
     public var count: Int {
-        arguments.count
+        matchingCount(in: snapshot().arguments[...])
     }
 
     /// The first matching argument, if a call was recorded.
     public var firstArgument: Arguments? {
-        arguments.first
+        snapshot().arguments.first(where: matching)
     }
 
     /// The last matching argument, if a call was recorded.
     public var lastArgument: Arguments? {
-        arguments.last
+        snapshot().arguments.last(where: matching)
     }
 
     /// The matching argument at `index`, or `nil` when the index is out of bounds.
     public func argument(at index: Int) -> Arguments? {
-        let arguments = arguments
-        guard arguments.indices.contains(index) else {
+        guard index >= 0 else {
             return nil
         }
-        return arguments[index]
+        var remaining = index
+        for argument in snapshot().arguments where matching(argument) {
+            if remaining == 0 {
+                return argument
+            }
+            remaining -= 1
+        }
+        return nil
     }
 
     /// The sole matching argument, or an error unless exactly one call was recorded.
     public var onlyArgument: Arguments {
         get throws {
-            let arguments = arguments
-            guard arguments.count == 1, let argument = arguments.first else {
-                throw CallHistoryError.expectedExactlyOne(member: member, actualCount: arguments.count)
+            let arguments = snapshot().arguments
+            guard let first = arguments.firstIndex(where: matching) else {
+                throw CallHistoryError.expectedExactlyOne(member: member, actualCount: 0)
             }
-            return argument
+            let rest = arguments[(first + 1)...]
+            guard !rest.contains(where: matching) else {
+                throw CallHistoryError.expectedExactlyOne(member: member, actualCount: 1 + matchingCount(in: rest))
+            }
+            return arguments[first]
         }
     }
 
@@ -83,39 +106,41 @@ public struct CallHistory<Arguments>: @unchecked Sendable {
             return
         }
 
+        // Each recorded argument is matched once; later checks only look at newer invocations.
+        var progress = WaitProgress()
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
         while true {
             try Task.checkCancellation()
-            let current = snapshot()
-            if current.arguments.count >= count {
+            let generation = progress.update(with: snapshot(), matching: matching)
+            if progress.matched >= count {
                 return
             }
             if clock.now >= deadline {
-                throw MockWaitError.timedOut(
-                    member: member,
-                    expectedCount: count,
-                    actualCount: current.arguments.count
-                )
+                throw MockWaitError.timedOut(member: member, expectedCount: count, actualCount: progress.matched)
             }
 
             let result = try await waitForChange(
-                after: current.generation,
+                after: generation,
                 until: deadline,
                 clock: clock
             )
             if result == .timedOut {
-                let final = snapshot()
-                if final.arguments.count >= count {
+                progress.update(with: snapshot(), matching: matching)
+                if progress.matched >= count {
                     return
                 }
-                throw MockWaitError.timedOut(
-                    member: member,
-                    expectedCount: count,
-                    actualCount: final.arguments.count
-                )
+                throw MockWaitError.timedOut(member: member, expectedCount: count, actualCount: progress.matched)
             }
         }
+    }
+
+    private func matchingCount(in arguments: ArraySlice<Arguments>) -> Int {
+        var count = 0
+        for argument in arguments where matching(argument) {
+            count += 1
+        }
+        return count
     }
 
     private func waitForChange(
@@ -138,5 +163,29 @@ public struct CallHistory<Arguments>: @unchecked Sendable {
             }
             return result
         }
+    }
+}
+
+/// Matching progress over append-only invocations, restarted when invocations are reset.
+private struct WaitProgress {
+    private(set) var matched = 0
+    private var scanned = 0
+    private var resets: UInt64?
+
+    /// Matches arguments recorded since the last update and returns the snapshot's generation.
+    @discardableResult mutating func update<Arguments>(
+        with snapshot: CallHistorySnapshot<Arguments>,
+        matching: (Arguments) -> Bool
+    ) -> UInt64 {
+        if snapshot.resets != resets {
+            resets = snapshot.resets
+            matched = 0
+            scanned = 0
+        }
+        for argument in snapshot.arguments[scanned...] where matching(argument) {
+            matched += 1
+        }
+        scanned = snapshot.arguments.count
+        return snapshot.generation
     }
 }

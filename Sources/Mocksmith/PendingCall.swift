@@ -126,7 +126,9 @@ public final class PendingCall<Arguments, Output, Failure: Error>: @unchecked Se
     private var callHistory: CallHistory<Arguments> {
         CallHistory(
             member: member,
-            snapshot: { [self] in lock.withLock { (generation, recordedArguments) } },
+            // Pending calls are never reset, so recorded arguments only grow.
+            snapshot: { [self] in lock.withLock { CallHistorySnapshot(generation: generation, resets: 0, arguments: recordedArguments) } },
+            matching: { _ in true },
             waitForChange: { [self] generation in try await waitForChange(after: generation) }
         )
     }
