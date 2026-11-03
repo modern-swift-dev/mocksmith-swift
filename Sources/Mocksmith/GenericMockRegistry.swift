@@ -1,22 +1,21 @@
-import Foundation
+import Synchronization
 
 /// Stores mock runtime channels keyed by member and generic type specialization.
-public final class GenericMockRegistry: @unchecked Sendable {
+public final class GenericMockRegistry: Sendable {
     private struct Key: Hashable {
         let key: String
         let types: [ObjectIdentifier]
     }
 
     private struct Entry {
-        let value: AnyObject
+        let value: any AnyObject & Sendable
         let type: ObjectIdentifier
-        let reset: ([MockScope]) -> Void
-        let invocations: () -> [_MocksmithInvocation]
-        let unverifiedInvocations: () -> [_MocksmithInvocation]
+        let reset: @Sendable ([MockScope]) -> Void
+        let invocations: @Sendable () -> [_MocksmithInvocation]
+        let unverifiedInvocations: @Sendable () -> [_MocksmithInvocation]
     }
 
-    private let lock = NSLock()
-    private var entries: [Key: Entry] = [:]
+    private let entries = Mutex<[Key: Entry]>([:])
 
     public init() {}
 
@@ -35,7 +34,7 @@ public final class GenericMockRegistry: @unchecked Sendable {
     ) -> MockMember<Arguments, Ephemeral, Output> {
         let lookup = Key(key: key, types: typeIDs)
         let type = ObjectIdentifier(MockMember<Arguments, Ephemeral, Output>.self)
-        if let (value, existingType) = lock.withLock({ entries[lookup].map { ($0.value, $0.type) } }) {
+        if let (value, existingType) = entries.withLock({ $0[lookup].map { ($0.value, $0.type) } }) {
             guard existingType == type else {
                 preconditionFailure("Generic mock member type changed for \(key)")
             }
@@ -43,7 +42,7 @@ public final class GenericMockRegistry: @unchecked Sendable {
         }
 
         let candidate = make()
-        return lock.withLock {
+        return entries.withLock { entries in
             if let existing = entries[lookup] {
                 guard existing.type == type else {
                     preconditionFailure("Generic mock member type changed for \(key)")
@@ -76,7 +75,7 @@ public final class GenericMockRegistry: @unchecked Sendable {
     ) -> TransientMockMember<Arguments, Ephemeral, Output> {
         let lookup = Key(key: key, types: typeIDs)
         let type = ObjectIdentifier(TransientMockMember<Arguments, Ephemeral, Output>.self)
-        if let (value, existingType) = lock.withLock({ entries[lookup].map { ($0.value, $0.type) } }) {
+        if let (value, existingType) = entries.withLock({ $0[lookup].map { ($0.value, $0.type) } }) {
             guard existingType == type else {
                 preconditionFailure("Generic mock member type changed for \(key)")
             }
@@ -84,7 +83,7 @@ public final class GenericMockRegistry: @unchecked Sendable {
         }
 
         let candidate = make()
-        return lock.withLock {
+        return entries.withLock { entries in
             if let existing = entries[lookup] {
                 guard existing.type == type else {
                     preconditionFailure("Generic mock member type changed for \(key)")
@@ -103,17 +102,17 @@ public final class GenericMockRegistry: @unchecked Sendable {
     }
 
     public func reset(_ scopes: [MockScope] = Array(MockScope.all)) {
-        let resets = lock.withLock { entries.values.map(\.reset) }
+        let resets = entries.withLock { $0.values.map(\.reset) }
         resets.forEach { $0(scopes) }
     }
 
     public var orderedInvocations: [_MocksmithInvocation] {
-        let snapshots = lock.withLock { entries.values.map(\.invocations) }
+        let snapshots = entries.withLock { $0.values.map(\.invocations) }
         return snapshots.flatMap { $0() }
     }
 
     public var unverifiedInvocations: [_MocksmithInvocation] {
-        let snapshots = lock.withLock { entries.values.map(\.unverifiedInvocations) }
+        let snapshots = entries.withLock { $0.values.map(\.unverifiedInvocations) }
         return snapshots.flatMap { $0() }
     }
 }

@@ -1,7 +1,7 @@
-import Foundation
+import Synchronization
 
 /// Stores static mock runtime channels keyed by owner, member, and type specialization.
-public final class StaticMockRegistry: @unchecked Sendable {
+public final class StaticMockRegistry: Sendable {
     private struct Key: Hashable {
         let owner: ObjectIdentifier
         let key: String
@@ -9,11 +9,11 @@ public final class StaticMockRegistry: @unchecked Sendable {
     }
 
     private struct Entry {
-        let value: AnyObject
+        let value: any AnyObject & Sendable
         let type: ObjectIdentifier
-        let reset: ([MockScope]) -> Void
-        let invocations: () -> [_MocksmithInvocation]
-        let unverifiedInvocations: () -> [_MocksmithInvocation]
+        let reset: @Sendable ([MockScope]) -> Void
+        let invocations: @Sendable () -> [_MocksmithInvocation]
+        let unverifiedInvocations: @Sendable () -> [_MocksmithInvocation]
     }
 
     /// The registry generated static mocks use: the one ``withIsolatedStaticMocks(isolation:_:)`` installed
@@ -25,8 +25,7 @@ public final class StaticMockRegistry: @unchecked Sendable {
     @TaskLocal static var isolated: StaticMockRegistry?
     private static let global = StaticMockRegistry()
 
-    private let lock = NSLock()
-    private var entries: [Key: Entry] = [:]
+    private let entries = Mutex<[Key: Entry]>([:])
 
     public init() {}
 
@@ -47,7 +46,7 @@ public final class StaticMockRegistry: @unchecked Sendable {
     ) -> MockMember<Arguments, Ephemeral, Output> {
         let lookup = Key(owner: ObjectIdentifier(owner), key: key, types: typeIDs)
         let type = ObjectIdentifier(MockMember<Arguments, Ephemeral, Output>.self)
-        if let (value, existingType) = lock.withLock({ entries[lookup].map { ($0.value, $0.type) } }) {
+        if let (value, existingType) = entries.withLock({ $0[lookup].map { ($0.value, $0.type) } }) {
             guard existingType == type else {
                 preconditionFailure("Static mock member type changed for \(key)")
             }
@@ -55,7 +54,7 @@ public final class StaticMockRegistry: @unchecked Sendable {
         }
 
         let candidate = make()
-        return lock.withLock {
+        return entries.withLock { entries in
             if let existing = entries[lookup] {
                 guard existing.type == type else {
                     preconditionFailure("Static mock member type changed for \(key)")
@@ -90,7 +89,7 @@ public final class StaticMockRegistry: @unchecked Sendable {
     ) -> TransientMockMember<Arguments, Ephemeral, Output> {
         let lookup = Key(owner: ObjectIdentifier(owner), key: key, types: typeIDs)
         let type = ObjectIdentifier(TransientMockMember<Arguments, Ephemeral, Output>.self)
-        if let (value, existingType) = lock.withLock({ entries[lookup].map { ($0.value, $0.type) } }) {
+        if let (value, existingType) = entries.withLock({ $0[lookup].map { ($0.value, $0.type) } }) {
             guard existingType == type else {
                 preconditionFailure("Static mock member type changed for \(key)")
             }
@@ -98,7 +97,7 @@ public final class StaticMockRegistry: @unchecked Sendable {
         }
 
         let candidate = make()
-        return lock.withLock {
+        return entries.withLock { entries in
             if let existing = entries[lookup] {
                 guard existing.type == type else {
                     preconditionFailure("Static mock member type changed for \(key)")
@@ -118,31 +117,31 @@ public final class StaticMockRegistry: @unchecked Sendable {
 
     public func reset(owner: Any.Type, scopes: [MockScope] = Array(MockScope.all)) {
         let identifier = ObjectIdentifier(owner)
-        let resets = lock.withLock {
-            entries.compactMap { $0.key.owner == identifier ? $0.value.reset : nil }
+        let resets = entries.withLock {
+            $0.compactMap { $0.key.owner == identifier ? $0.value.reset : nil }
         }
         resets.forEach { $0(scopes) }
     }
 
     public func orderedInvocations(owner: Any.Type) -> [_MocksmithInvocation] {
         let identifier = ObjectIdentifier(owner)
-        let snapshots = lock.withLock {
-            entries.compactMap { $0.key.owner == identifier ? $0.value.invocations : nil }
+        let snapshots = entries.withLock {
+            $0.compactMap { $0.key.owner == identifier ? $0.value.invocations : nil }
         }
         return snapshots.flatMap { $0() }
     }
 
     public func unverifiedInvocations(owner: Any.Type) -> [_MocksmithInvocation] {
         let identifier = ObjectIdentifier(owner)
-        let snapshots = lock.withLock {
-            entries.compactMap { $0.key.owner == identifier ? $0.value.unverifiedInvocations : nil }
+        let snapshots = entries.withLock {
+            $0.compactMap { $0.key.owner == identifier ? $0.value.unverifiedInvocations : nil }
         }
         return snapshots.flatMap { $0() }
     }
 
     public func remove(owner: Any.Type, key: String) {
         let identifier = ObjectIdentifier(owner)
-        let retired = lock.withLock {
+        let retired = entries.withLock { entries in
             let keys = entries.keys.filter { $0.owner == identifier && $0.key == key }
             return keys.compactMap { entries.removeValue(forKey: $0) }
         }
