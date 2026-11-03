@@ -27,6 +27,14 @@ func nextMockInvocationSequence() -> UInt64 {
     InvocationSequence.next()
 }
 
+/// How later in-order expectations relate to the invocation matched before them.
+public enum InOrderMode: Sendable {
+    /// Each later expectation must match the immediate next participating invocation.
+    case strict
+    /// Later expectations may skip participating invocations that don't match them.
+    case relaxed
+}
+
 public final class InOrder {
     private enum SourceID: Hashable {
         case instance(ObjectIdentifier)
@@ -41,8 +49,11 @@ public final class InOrder {
 
     private var sources: [SourceID: () -> [_MocksmithInvocation]] = [:]
     private var expectations: [Expectation] = []
+    private let mode: InOrderMode
 
-    public init() {}
+    public init(mode: InOrderMode = .strict) {
+        self.mode = mode
+    }
 
     public func _append(
         source: AnyObject,
@@ -78,9 +89,11 @@ public final class InOrder {
         }
 
         // The first expectation may match anywhere, so try every occurrence as a start and keep
-        // the failure that got furthest (earliest on ties) to explain why none matched.
+        // the failure that got furthest (earliest on ties) to explain why none matched. Relaxed
+        // matching picks the earliest match at each step, so a later start can't do better.
+        let candidates = mode == .strict ? starts[...] : starts.prefix(1)
         var bestFailure = (matchedCount: 0, message: "")
-        for start in starts {
+        for start in candidates {
             switch attempt(from: start, in: invocations) {
                 case let .matched(matched):
                     matched.forEach { $0.expectation.markVerified($0.sequence) }
@@ -105,22 +118,33 @@ public final class InOrder {
 
         for expectation in expectations.dropFirst() {
             let previous = invocations[index]
-            index += 1
-            guard index < invocations.endIndex else {
-                return .failed(
-                    matchedCount: matched.count,
-                    message: "Expected \(expectation.member) after \(previous.member), but no invocation followed"
-                )
+            switch mode {
+                case .strict:
+                    index += 1
+                    guard index < invocations.endIndex else {
+                        return .failed(
+                            matchedCount: matched.count,
+                            message: "Expected \(expectation.member) after \(previous.member), but no invocation followed"
+                        )
+                    }
+                    let actual = invocations[index]
+                    guard expectation.matches(actual.sequence) else {
+                        let got = actual.member == expectation.member ? "\(actual.member) with non-matching arguments" : actual.member
+                        return .failed(
+                            matchedCount: matched.count,
+                            message: "Expected \(expectation.member) after \(previous.member), got \(got)"
+                        )
+                    }
+                case .relaxed:
+                    guard let next = invocations[(index + 1)...].firstIndex(where: { expectation.matches($0.sequence) }) else {
+                        return .failed(
+                            matchedCount: matched.count,
+                            message: "Expected \(expectation.member) after \(previous.member), but no matching invocation followed"
+                        )
+                    }
+                    index = next
             }
-            let actual = invocations[index]
-            guard expectation.matches(actual.sequence) else {
-                let got = actual.member == expectation.member ? "\(actual.member) with non-matching arguments" : actual.member
-                return .failed(
-                    matchedCount: matched.count,
-                    message: "Expected \(expectation.member) after \(previous.member), got \(got)"
-                )
-            }
-            matched.append((expectation, actual.sequence))
+            matched.append((expectation, invocations[index].sequence))
         }
         return .matched(matched)
     }

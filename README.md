@@ -256,6 +256,17 @@ VerifyInOrder { order in
 
 The first expectation may match anywhere in participating mocks' history. Each later expectation must match the immediate next participating invocation; calls before the first, after the last, and on mocks without expectations are ignored.
 
+Pass `.relaxed` when other calls on participating mocks may happen in between. Later expectations then match the next matching invocation, skipping any that don't match:
+
+```swift
+VerifyInOrder(.relaxed) { order in
+    order.expect(repository).load(.value(id))
+    order.expect(cache).save(.value(item))
+}
+```
+
+Skipped invocations stay unverified, so `VerifyNoMoreInteractions` still reports them.
+
 ## Static members and subscripts
 
 ```swift

@@ -79,6 +79,21 @@ private final class ReferenceItem {}
     }
 }
 
+@Test private func relaxedOrderSkipsUnrelatedCalls() {
+    let service = MatchingServiceMock()
+    Given(service).record(.any)
+
+    service.record(1)
+    service.record(2)
+    service.record(3)
+
+    // Strict order would fail here: record(2) sits between the expected calls.
+    VerifyInOrder(.relaxed) { order in
+        order.expect(service).record(.value(1))
+        order.expect(service).record(.value(3))
+    }
+}
+
 @Test private func resetScopesClearOnlyRequestedState() throws {
     let service = MatchingServiceMock()
     var actions = 0

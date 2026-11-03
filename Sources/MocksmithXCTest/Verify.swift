@@ -42,11 +42,12 @@ public func Verify<M: StaticMock>(
 }
 
 public func VerifyInOrder(
+    _ mode: InOrderMode = .strict,
     file: StaticString = #filePath,
     line: UInt = #line,
     _ body: (InOrder) -> Void
 ) {
-    let order = InOrder()
+    let order = InOrder(mode: mode)
     body(order)
     report(order.verification(), file: file, line: line)
 }

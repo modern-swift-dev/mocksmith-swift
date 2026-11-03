@@ -38,10 +38,11 @@ public func Verify<M: StaticMock>(
 }
 
 public func VerifyInOrder(
+    _ mode: InOrderMode = .strict,
     sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column),
     _ body: (InOrder) -> Void
 ) {
-    let order = InOrder()
+    let order = InOrder(mode: mode)
     body(order)
     record(order.verification(), sourceLocation: sourceLocation)
 }

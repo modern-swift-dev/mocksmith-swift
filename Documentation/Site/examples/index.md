@@ -97,6 +97,23 @@ control.resume(returning: "value")
 #expect(try await task.value == "value")
 ```
 
+## Verify call order
+
+`VerifyInOrder` checks calls across mocks. The default strict mode requires each later expectation to match the very next call on a participating mock; `.relaxed` lets unrelated calls happen in between.
+
+Call order
+
+```swift
+service.record(1)
+service.record(2)
+service.record(3)
+
+VerifyInOrder(.relaxed) { order in
+    order.expect(service).record(.value(1))
+    order.expect(service).record(.value(3))
+}
+```
+
 ## Run the complete samples
 
 The repository covers callbacks, generics, actors, inherited protocols, noncopyable inputs, XCTest, and strict-order verification.

@@ -86,3 +86,57 @@ private func expect(_ member: MockMember<Int, Void, Void>, _ name: String, _ arg
     #expect(!result.success)
     #expect(result.message == "Expected second after first, but no invocation followed")
 }
+
+@Test func strictInOrderRejectsInterleavedInvocations() throws {
+    let first = makeMember("first")
+    let second = makeMember("second")
+    try first.invoke(1)
+    try second.invoke(9)
+    try second.invoke(2)
+
+    let order = InOrder(mode: .strict)
+    expect(first, "first", 1, in: order)
+    expect(second, "second", 2, in: order)
+
+    #expect(!order.verification().success)
+}
+
+@Test func relaxedInOrderSkipsInterleavedInvocations() throws {
+    let first = makeMember("first")
+    let second = makeMember("second")
+    let third = makeMember("third")
+    try first.invoke(1)
+    try second.invoke(9)
+    try third.invoke(5)
+    try second.invoke(2)
+    try first.invoke(3)
+
+    let order = InOrder(mode: .relaxed)
+    expect(first, "first", 1, in: order)
+    expect(second, "second", 2, in: order)
+    expect(first, "first", 3, in: order)
+
+    let result = order.verification()
+    #expect(result.success, "\(result.message)")
+    // Skipped invocations stay unverified.
+    #expect(first._mocksmithUnverifiedInvocations.isEmpty)
+    #expect(second._mocksmithUnverifiedInvocations.count == 1)
+    #expect(third._mocksmithUnverifiedInvocations.count == 1)
+}
+
+@Test func relaxedInOrderStillRequiresOrder() throws {
+    let first = makeMember("first")
+    let second = makeMember("second")
+    try second.invoke(2)
+    try first.invoke(1)
+
+    let order = InOrder(mode: .relaxed)
+    expect(first, "first", 1, in: order)
+    expect(second, "second", 2, in: order)
+
+    let result = order.verification()
+    #expect(!result.success)
+    #expect(result.message == "Expected second after first, but no matching invocation followed")
+    #expect(first._mocksmithUnverifiedInvocations.count == 1)
+    #expect(second._mocksmithUnverifiedInvocations.count == 1)
+}
