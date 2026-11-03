@@ -86,6 +86,23 @@ protocol Parent {
         subprocess.run([str(generator), f"@{response_file}"], cwd=root, check=True)
         assert response_output.read_text() == generated
 
+        # NSTask rejects more than 4096 arguments; a response file must carry
+        # every entry beyond that limit.
+        many = directory / "Many"
+        many.mkdir()
+        many_paths = []
+        for index in range(4200):
+            many_paths.append(many / f"File{index}.swift")
+            many_paths[-1].write_text(f"func value{index}() -> Int {{ {index} }}\n")
+        many_paths[-1].write_text("import Mocksmith\n@Mockable protocol LastService { func value() -> Int }\n")
+        many_output = many / "Generated.swift"
+        many_arguments = many / "arguments.txt"
+        many_arguments.write_text("\n".join([
+            "--output", str(many_output), "--target-module", "Many", "--module", "Many", *map(str, many_paths),
+        ]))
+        subprocess.run([str(generator), f"@{many_arguments}"], cwd=root, check=True)
+        assert "class LastServiceMock:" in many_output.read_text()
+
         # A prebuild plugin must expose only Swift sources, never its JSON cache.
         prebuild_output = directory / "GeneratedSources" / "Mocksmith.generated.swift"
         prebuild_cache = directory / "PrivateCache" / "generation.json"

@@ -52,6 +52,14 @@ jobs:
         run: swift build 2>&1 | mint run --no-install cpisciotta/xcbeautify -q
       - name: Test
         run: swift test 2>&1 | mint run --no-install cpisciotta/xcbeautify -q
+      - name: Install Python
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3
+      - name: Test generator built from source
+        run: |
+          swift build --product MocksmithGenerator
+          python3 Scripts/test-generator.py "$(swift build --show-bin-path)/MocksmithGenerator"
 
   apple:
     runs-on: macos-26
