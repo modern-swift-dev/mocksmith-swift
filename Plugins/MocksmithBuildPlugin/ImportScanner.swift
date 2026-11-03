@@ -1,3 +1,6 @@
+#if canImport(CryptoKit)
+    import CryptoKit
+#endif
 import Foundation
 
 private enum SourceRegion {
@@ -10,7 +13,7 @@ private enum SourceRegion {
 /// Keep this cache private to plugin planning; it is not a generated target resource.
 private struct ImportCache: Codable, Equatable {
     struct Entry: Codable, Equatable {
-        /// SHA-256 of the file's text; compared instead of the text itself.
+        /// SHA-256 of the file's bytes; compared instead of the text itself.
         let digest: String
         let modules: Set<String>
     }
@@ -71,14 +74,14 @@ struct ImportScanner {
         let expression = Self.importExpression
         var modules = Set<String>()
         for path in paths {
-            let source = try String(contentsOf: path, encoding: .utf8)
-            let digest = SHA256.hexDigest(of: source)
+            let data = try Data(contentsOf: path)
+            let digest = try Self.hexDigest(of: data, at: path)
             let entry: ImportCache.Entry
             // Compare contents, not timestamps: edits with preserved metadata must invalidate.
             if let cached = previous?.files[path.path], cached.digest == digest {
                 entry = cached
             } else {
-                let sourceCode = sourceCodeOnly(source)
+                let sourceCode = try sourceCodeOnly(Self.utf8Source(data, at: path))
                 let range = NSRange(sourceCode.startIndex..., in: sourceCode)
                 let imports = expression.matches(in: sourceCode, range: range).compactMap { match -> String? in
                     guard let moduleRange = Range(match.range(at: 1), in: sourceCode) else {
@@ -104,6 +107,23 @@ struct ImportScanner {
         }
         try FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(cache).write(to: cacheURL, options: .atomic)
+    }
+
+    /// SwiftPM builds plugins without optimization, where the portable SHA-256
+    /// is several hundred times slower than CryptoKit.
+    private static func hexDigest(of data: Data, at path: URL) throws -> String {
+        #if canImport(CryptoKit)
+            CryptoKit.SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        #else
+            try SHA256.hexDigest(of: utf8Source(data, at: path))
+        #endif
+    }
+
+    private static func utf8Source(_ data: Data, at path: URL) throws -> String {
+        guard let source = String(bytes: data, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding, userInfo: [NSFilePathErrorKey: path.path])
+        }
+        return source
     }
 
     private func sourceCodeOnly(_ source: String) -> String {
