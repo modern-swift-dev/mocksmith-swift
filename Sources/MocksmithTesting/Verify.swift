@@ -66,7 +66,19 @@ public extension CallHistory {
     func expectCount(
         _ count: Int,
         timeout: Duration,
-        sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)
+        fileID: String = #fileID,
+        filePath: String = #filePath,
+        line: Int = #line,
+        column: Int = #column
+    ) async {
+        await expectCount(count, timeout: timeout, sourceLocation: SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column))
+    }
+
+    /// Waits for matching calls and records a test failure at `sourceLocation` if the wait fails.
+    func expectCount(
+        _ count: Int,
+        timeout: Duration,
+        sourceLocation: SourceLocation
     ) async {
         do {
             try await waitForCount(count, timeout: timeout)
@@ -77,7 +89,17 @@ public extension CallHistory {
 
     /// Returns the sole matching argument, recording a test failure otherwise.
     func requireOnlyArgument(
-        sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)
+        fileID: String = #fileID,
+        filePath: String = #filePath,
+        line: Int = #line,
+        column: Int = #column
+    ) throws -> Arguments {
+        try requireOnlyArgument(sourceLocation: SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column))
+    }
+
+    /// Returns the sole matching argument, recording a test failure at `sourceLocation` otherwise.
+    func requireOnlyArgument(
+        sourceLocation: SourceLocation
     ) throws -> Arguments {
         do {
             return try onlyArgument
@@ -89,7 +111,17 @@ public extension CallHistory {
 
     /// Returns the last matching argument, recording a test failure if none exists.
     func requireLastArgument(
-        sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)
+        fileID: String = #fileID,
+        filePath: String = #filePath,
+        line: Int = #line,
+        column: Int = #column
+    ) throws -> Arguments {
+        try requireLastArgument(sourceLocation: SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column))
+    }
+
+    /// Returns the last matching argument, recording a test failure at `sourceLocation` if none exists.
+    func requireLastArgument(
+        sourceLocation: SourceLocation
     ) throws -> Arguments {
         guard let argument = lastArgument else {
             let error = CallHistoryError.expectedAtLeastOne(member: _mocksmithMemberName)
@@ -105,7 +137,19 @@ public extension PendingCall {
     func expectCalled(
         count: Int = 1,
         timeout: Duration,
-        sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)
+        fileID: String = #fileID,
+        filePath: String = #filePath,
+        line: Int = #line,
+        column: Int = #column
+    ) async {
+        await expectCalled(count: count, timeout: timeout, sourceLocation: SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column))
+    }
+
+    /// Waits for pending invocations and records a test failure at `sourceLocation` if the wait fails.
+    func expectCalled(
+        count: Int = 1,
+        timeout: Duration,
+        sourceLocation: SourceLocation
     ) async {
         do {
             try await waitUntilCalled(count: count, timeout: timeout)

@@ -102,6 +102,7 @@ let package = Package(
                 "MocksmithInheritanceFixture",
                 .product(name: "ExternalProtocols", package: "external-protocols")
             ],
+            swiftSettings: [.enableUpcomingFeature("MemberImportVisibility")],
             plugins: ["MocksmithBuildPlugin"]
         ),
         .testTarget(

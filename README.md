@@ -397,7 +397,7 @@ Use `.void` for setup mocks whose unstubbed nonthrowing `Void` requirements shou
 
 ## Test runners
 
-`MocksmithTesting.Verify` records a failed `VerificationResult` with `Testing.Issue.record` and the caller's `SourceLocation`. `MocksmithXCTest.Verify` uses `XCTFail(_:file:line:)`. Their call-history and pending-call assertion extensions use the same reporting mechanism. If both adapters are imported, qualify `Verify` with the module name and keep identically named assertion extensions in files that import only one runner adapter.
+`MocksmithTesting.Verify` records a failed `VerificationResult` with `Testing.Issue.record` and the caller's `SourceLocation`. `MocksmithXCTest.Verify` uses `XCTFail(_:file:line:)`. Their call-history and pending-call assertion extensions use the same reporting mechanism. If both adapters are imported, qualify `Verify` with the module name and keep identically named assertion extensions in files that import only one runner adapter. A test target that links both adapters should also enable the `MemberImportVisibility` upcoming feature (`swiftSettings: [.enableUpcomingFeature("MemberImportVisibility")]`); without it, Swift resolves those extensions the same way in every file regardless of its imports, so some files call the other runner's assertion.
 
 ## Swift 6.3 limits
 
