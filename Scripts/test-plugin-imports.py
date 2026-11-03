@@ -10,8 +10,9 @@ from tempfile import TemporaryDirectory
 
 def main():
     root = Path(__file__).resolve().parent.parent
-    source = (root / "Plugins/MocksmithBuildPlugin/ImportScanner.swift").read_text()
-    marker = "entry = ImportCache.Entry(source: source, modules:"
+    plugin = root / "Plugins/MocksmithBuildPlugin"
+    source = (plugin / "ImportScanner.swift").read_text()
+    marker = "entry = ImportCache.Entry(digest: digest, modules:"
     assert source.count(marker) == 1, "Update cache-miss instrumentation for the scanner implementation"
     # Count real cache misses in the copied implementation, without modifying
     # production code or using wall-clock thresholds to infer reuse.
@@ -38,7 +39,8 @@ print(String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
         cache = directory / "imports.json"
         harness.write_text(source)
         subprocess.run([
-            "swiftc", "-swift-version", "6", str(harness), "-o", str(executable)
+            "swiftc", "-swift-version", "6", str(harness), str(plugin / "SHA256.swift"),
+            "-o", str(executable),
         ], cwd=root, check=True)
 
         first = directory / "First.swift"
