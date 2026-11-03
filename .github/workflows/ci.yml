@@ -31,6 +31,8 @@ jobs:
         run: python3 Scripts/test-xcode-build-cache.py
       - name: Test plugin import scanning
         run: python3 Scripts/test-plugin-imports.py
+      - name: Test build plugin generator invocation
+        run: python3 Scripts/test-build-plugin.py
 
   linux:
     runs-on: ubuntu-24.04
